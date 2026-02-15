@@ -121,7 +121,11 @@ func decodeParams(data []byte) hfileConfig {
 		data = append(data, 0)
 	}
 
-	includeTags := data[0]%2 == 1
+	// compression: NONE or GZ
+	compressions := []string{"NONE", "GZ"}
+	compression := compressions[data[0]%uint8(len(compressions))]
+
+	includeTags := data[0]/uint8(len(compressions))%2 == 1
 
 	// blockSize: 64 to 65536
 	blockSize := 64 + int(binary.BigEndian.Uint16(data[1:3]))%(65536-64+1)
@@ -134,7 +138,7 @@ func decodeParams(data []byte) hfileConfig {
 
 	// families: 1-3, from a fixed pool
 	familyPool := []string{"a", "bb", "ccc"}
-	numFamilies := 1 + int(data[0]/2)%3
+	numFamilies := 1 + int(data[0]/uint8(len(compressions))/2)%3
 	families := familyPool[:numFamilies]
 
 	// qualifiers: 1-3, from a fixed pool
@@ -143,7 +147,7 @@ func decodeParams(data []byte) hfileConfig {
 	qualifiers := qualPool[:numQualifiers]
 
 	return hfileConfig{
-		Compression:       "NONE",
+		Compression:       compression,
 		DataBlockEncoding: "NONE",
 		IncludeTags:       includeTags,
 		BlockSize:         blockSize,
@@ -178,6 +182,7 @@ func FuzzReadHFile(f *testing.F) {
 	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00}) // tags, small blocks, 50 cells
 	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02}) // no tags, tiny block, 100 cells, multi-family
 	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02}) // tags, large block, 1 cell, multi-qualifier
+	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00}) // GZ compression, 20 cells
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		srv, err := getServer()
