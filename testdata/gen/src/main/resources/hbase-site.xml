@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+  <property>
+    <name>hbase.io.compress.snappy.codec</name>
+    <value>org.apache.hadoop.hbase.io.compress.xerial.SnappyCodec</value>
+  </property>
+  <property>
+    <name>hbase.io.compress.zstd.codec</name>
+    <value>org.apache.hadoop.hbase.io.compress.zstd.ZstdCodec</value>
+  </property>
+</configuration>

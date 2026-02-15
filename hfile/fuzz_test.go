@@ -122,7 +122,7 @@ func decodeParams(data []byte) hfileConfig {
 	}
 
 	// compression: NONE or GZ
-	compressions := []string{"NONE", "GZ"}
+	compressions := []string{"NONE", "GZ", "SNAPPY", "ZSTD"}
 	compression := compressions[data[0]%uint8(len(compressions))]
 
 	includeTags := data[0]/uint8(len(compressions))%2 == 1
@@ -183,6 +183,8 @@ func FuzzReadHFile(f *testing.F) {
 	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02}) // no tags, tiny block, 100 cells, multi-family
 	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02}) // tags, large block, 1 cell, multi-qualifier
 	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00}) // GZ compression, 20 cells
+	f.Add([]byte{0x02, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00}) // SNAPPY compression, 20 cells
+	f.Add([]byte{0x03, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00}) // ZSTD compression, 20 cells
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		srv, err := getServer()

@@ -21,6 +21,16 @@
       <artifactId>hbase-server</artifactId>
       <version>${hbase.version}</version>
     </dependency>
+    <dependency>
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>hbase-compression-snappy</artifactId>
+      <version>${hbase.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>hbase-compression-zstd</artifactId>
+      <version>${hbase.version}</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -31,6 +41,7 @@
         <version>3.1.0</version>
         <configuration>
           <mainClass>${exec.mainClass}</mainClass>
+          <classpathScope>compile</classpathScope>
         </configuration>
       </plugin>
     </plugins>

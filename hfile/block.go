@@ -160,7 +160,7 @@ func ReadBlock(r io.ReaderAt, offset int64, decomp Decompressor) (*Block, error)
 	}
 
 	// Decompress the data portion.
-	payload, err := decomp.Decompress(onDisk[:dataSize])
+	payload, err := decomp.Decompress(onDisk[:dataSize], int(hdr.UncompressedSize))
 	if err != nil {
 		return nil, fmt.Errorf("hfile: decompress block at %d: %w", offset, err)
 	}
