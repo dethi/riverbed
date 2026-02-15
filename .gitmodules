@@ -1,0 +1,3 @@
+[submodule "third-party/hbase"]
+	path = third-party/hbase
+	url = https://github.com/apache/hbase
