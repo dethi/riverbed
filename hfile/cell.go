@@ -41,32 +41,19 @@ type Cell struct {
 	Tags      []byte
 }
 
-// ParseCells parses all KeyValue entries from a data block payload.
-func ParseCells(data []byte) ([]*Cell, error) {
-	var cells []*Cell
-	offset := 0
-	for offset < len(data) {
-		cell, n, err := parseCell(data, offset)
-		if err != nil {
-			return nil, err
-		}
-		cells = append(cells, cell)
-		offset += n
-	}
-	return cells, nil
-}
-
 // CellIterator iterates over cells in a data block without allocating a slice upfront.
 type CellIterator struct {
-	data   []byte
-	offset int
-	cell   *Cell
-	err    error
+	data        []byte
+	offset      int
+	includeTags bool
+	cell        *Cell
+	err         error
 }
 
 // NewCellIterator creates an iterator over cells in a data block payload.
-func NewCellIterator(data []byte) *CellIterator {
-	return &CellIterator{data: data}
+// includeTags indicates whether cells contain a 2-byte tags length + tags data.
+func NewCellIterator(data []byte, includeTags bool) *CellIterator {
+	return &CellIterator{data: data, includeTags: includeTags}
 }
 
 // Next advances to the next cell. Returns false when done or on error.
@@ -74,7 +61,7 @@ func (it *CellIterator) Next() bool {
 	if it.offset >= len(it.data) || it.err != nil {
 		return false
 	}
-	cell, n, err := parseCell(it.data, it.offset)
+	cell, n, err := parseCell(it.data, it.offset, it.includeTags)
 	if err != nil {
 		it.err = err
 		return false
@@ -90,7 +77,7 @@ func (it *CellIterator) Cell() *Cell { return it.cell }
 // Err returns any error encountered during iteration.
 func (it *CellIterator) Err() error { return it.err }
 
-func parseCell(data []byte, offset int) (*Cell, int, error) {
+func parseCell(data []byte, offset int, includeTags bool) (*Cell, int, error) {
 	if offset+8 > len(data) {
 		return nil, 0, fmt.Errorf("hfile: cell at offset %d: not enough data for key/value lengths", offset)
 	}
@@ -143,9 +130,9 @@ func parseCell(data []byte, offset int) (*Cell, int, error) {
 	value := data[pos : pos+valLen]
 	pos += valLen
 
-	// Tags (v3): 2-byte length + tags data.
+	// Tags (v3): present only when the HFile includes tags (MAX_TAGS_LEN > 0).
 	var tags []byte
-	if pos+2 <= len(data) {
+	if includeTags && pos+2 <= len(data) {
 		tagsLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
 		pos += 2
 		if tagsLen > 0 {
@@ -155,6 +142,15 @@ func parseCell(data []byte, offset int) (*Cell, int, error) {
 			tags = data[pos : pos+tagsLen]
 			pos += tagsLen
 		}
+	}
+
+	// HFile v3 appends a memstoreTS (Hadoop VInt) after each cell.
+	if pos < len(data) {
+		_, n, err := readVInt(data, pos)
+		if err != nil {
+			return nil, 0, fmt.Errorf("hfile: cell at offset %d: read memstoreTS: %w", offset, err)
+		}
+		pos += n
 	}
 
 	return &Cell{

@@ -1,9 +1,13 @@
 package hfile
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 )
+
+// FileInfo key for max tags length.
+const fileInfoMaxTagsLen = "MAX_TAGS_LEN"
 
 // Reader reads an HFile (v3 only).
 type Reader struct {
@@ -11,11 +15,12 @@ type Reader struct {
 	fileSize int64
 	decomp   Decompressor
 
-	trailer   *Trailer
-	dataIndex *BlockIndex
-	metaIndex *BlockIndex
-	fileInfo  map[string][]byte
-	bloom     *BloomFilter // may be nil
+	trailer     *Trailer
+	dataIndex   *BlockIndex
+	metaIndex   *BlockIndex
+	fileInfo    map[string][]byte
+	bloom       *BloomFilter // may be nil
+	includeTags bool
 }
 
 // Open opens an HFile for reading. The caller provides an io.ReaderAt and the file size.
@@ -68,22 +73,22 @@ func (rd *Reader) readLoadOnOpen() error {
 	}
 	offset += blockHeaderSize + int64(hdr.OnDiskSizeWithoutHeader)
 
-	// 2. Meta index block (if present).
+	// 2. Meta index block (always written by HBase, even when empty).
 	if rd.trailer.MetaIndexCount > 0 {
 		metaIndex, err := ReadMetaIndex(rd.r, offset, int(rd.trailer.MetaIndexCount), rd.decomp)
 		if err != nil {
 			return fmt.Errorf("hfile: read meta index: %w", err)
 		}
 		rd.metaIndex = metaIndex
-
-		hdr, err := ReadBlockHeader(rd.r, offset)
-		if err != nil {
-			return err
-		}
-		offset += blockHeaderSize + int64(hdr.OnDiskSizeWithoutHeader)
 	} else {
 		rd.metaIndex = &BlockIndex{}
 	}
+
+	hdr, err = ReadBlockHeader(rd.r, offset)
+	if err != nil {
+		return err
+	}
+	offset += blockHeaderSize + int64(hdr.OnDiskSizeWithoutHeader)
 
 	// 3. File info block.
 	fileInfo, err := ReadFileInfo(rd.r, offset, rd.decomp)
@@ -91,6 +96,11 @@ func (rd *Reader) readLoadOnOpen() error {
 		return fmt.Errorf("hfile: read file info: %w", err)
 	}
 	rd.fileInfo = fileInfo
+
+	// Determine if cells include tags based on MAX_TAGS_LEN file info entry.
+	if v, ok := fileInfo[fileInfoMaxTagsLen]; ok && len(v) == 4 {
+		rd.includeTags = binary.BigEndian.Uint32(v) > 0
+	}
 
 	hdr, err = ReadBlockHeader(rd.r, offset)
 	if err != nil {
@@ -192,7 +202,7 @@ func (s *Scanner) Next() bool {
 			return false
 		}
 
-		s.cellIter = NewCellIterator(blk.Data)
+		s.cellIter = NewCellIterator(blk.Data, s.rd.includeTags)
 	}
 }
 

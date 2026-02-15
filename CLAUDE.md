@@ -6,6 +6,7 @@ Riverbed is a collection of tool and service written in Go to interop with HBase
 
 - We are only interested in supporting HBase 2.6+
 - The source code of HBase is available in the `./third-party/hbase` folder
+- The various HBase binary and tool can be run, they are in `./third-party/hbase/bin`
 
 ## Go
 
