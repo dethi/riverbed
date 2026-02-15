@@ -1,0 +1,7 @@
+{"outputPath":"/tmp/seed-corpus-0.hfile","compression":"NONE","dataBlockEncoding":"NONE","includeTags":false,"blockSize":65344,"cellCount":11,"families":["a"],"qualifiers":["x"],"valueSize":6,"timestamp":1700000000000}
+{"outputPath":"/tmp/seed-corpus-1.hfile","compression":"GZ","dataBlockEncoding":"NONE","includeTags":false,"blockSize":128,"cellCount":51,"families":["a"],"qualifiers":["x"],"valueSize":10,"timestamp":1700000000000}
+{"outputPath":"/tmp/seed-corpus-2.hfile","compression":"NONE","dataBlockEncoding":"NONE","includeTags":true,"blockSize":64,"cellCount":101,"families":["a"],"qualifiers":["x","yy","zzz"],"valueSize":0,"timestamp":1700000000000}
+{"outputPath":"/tmp/seed-corpus-3.hfile","compression":"ZSTD","dataBlockEncoding":"NONE","includeTags":false,"blockSize":126,"cellCount":2,"families":["a"],"qualifiers":["x","yy","zzz"],"valueSize":100,"timestamp":1700000000000}
+{"outputPath":"/tmp/seed-corpus-4.hfile","compression":"GZ","dataBlockEncoding":"NONE","includeTags":false,"blockSize":128,"cellCount":21,"families":["a"],"qualifiers":["x"],"valueSize":10,"timestamp":1700000000000}
+{"outputPath":"/tmp/seed-corpus-5.hfile","compression":"SNAPPY","dataBlockEncoding":"NONE","includeTags":false,"blockSize":128,"cellCount":21,"families":["a"],"qualifiers":["x"],"valueSize":10,"timestamp":1700000000000}
+{"outputPath":"/tmp/seed-corpus-6.hfile","compression":"ZSTD","dataBlockEncoding":"NONE","includeTags":false,"blockSize":128,"cellCount":21,"families":["a"],"qualifiers":["x"],"valueSize":10,"timestamp":1700000000000}

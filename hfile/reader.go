@@ -7,7 +7,7 @@ import (
 )
 
 // FileInfo key for max tags length.
-const fileInfoMaxTagsLen = "MAX_TAGS_LEN"
+const fileInfoMaxTagsLen = "hfile.MAX_TAGS_LEN"
 
 // Reader reads an HFile (v3 only).
 type Reader struct {
