@@ -79,10 +79,14 @@ func getServer() (*hfileServer, error) {
 }
 
 func (s *hfileServer) generate(cfg hfileConfig) error {
+	return s.generateRaw(cfg)
+}
+
+func (s *hfileServer) generateRaw(v any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data, err := json.Marshal(cfg)
+	data, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
