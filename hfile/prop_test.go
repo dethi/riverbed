@@ -29,12 +29,13 @@ type rowGroup struct {
 }
 
 type recipe struct {
-	OutputPath  string     `json:"outputPath"`
-	Compression string     `json:"compression"`
-	BlockSize   int        `json:"blockSize"`
-	Seed        int64      `json:"seed"`
-	Family      string     `json:"family"`
-	Groups      []rowGroup `json:"groups"`
+	OutputPath        string     `json:"outputPath"`
+	Compression       string     `json:"compression"`
+	DataBlockEncoding string     `json:"dataBlockEncoding"`
+	BlockSize         int        `json:"blockSize"`
+	Seed              int64      `json:"seed"`
+	Family            string     `json:"family"`
+	Groups            []rowGroup `json:"groups"`
 }
 
 // Rapid generators.
@@ -42,6 +43,7 @@ type recipe struct {
 func genRecipe(t *rapid.T) recipe {
 	seed := rapid.Int64().Draw(t, "seed")
 	compression := rapid.SampledFrom([]string{"NONE", "GZ", "SNAPPY", "ZSTD"}).Draw(t, "compression")
+	encoding := rapid.SampledFrom([]string{"NONE", "FAST_DIFF"}).Draw(t, "dataBlockEncoding")
 	blockSize := rapid.IntRange(64, 65536).Draw(t, "blockSize")
 	family := rapid.StringMatching(`[a-z]{1,5}`).Draw(t, "family")
 
@@ -52,11 +54,12 @@ func genRecipe(t *rapid.T) recipe {
 	}
 
 	return recipe{
-		Seed:        seed,
-		Compression: compression,
-		BlockSize:   blockSize,
-		Family:      family,
-		Groups:      groups,
+		Seed:              seed,
+		Compression:       compression,
+		DataBlockEncoding: encoding,
+		BlockSize:         blockSize,
+		Family:            family,
+		Groups:            groups,
 	}
 }
 

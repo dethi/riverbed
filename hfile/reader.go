@@ -9,11 +9,25 @@ import (
 // FileInfo key for max tags length.
 const fileInfoMaxTagsLen = "hfile.MAX_TAGS_LEN"
 
+// dataBlockEncodingID maps a DataBlockEncoding name to its numeric ID.
+func dataBlockEncodingID(name string) (int, error) {
+	switch name {
+	case "NONE":
+		return EncodingNone, nil
+	case "FAST_DIFF":
+		return EncodingFastDiff, nil
+	default:
+		return 0, fmt.Errorf("hfile: unsupported data block encoding %q", name)
+	}
+}
+
 // Reader reads an HFile (v3 only).
 type Reader struct {
-	r        io.ReaderAt
-	fileSize int64
-	decomp   Decompressor
+	r          io.ReaderAt
+	fileSize   int64
+	decomp     Decompressor
+	decoder    DataBlockDecoder
+	encodingID int
 
 	trailer     *Trailer
 	dataIndex   *BlockIndex
@@ -101,6 +115,22 @@ func (rd *Reader) readLoadOnOpen() error {
 	if v, ok := fileInfo[fileInfoMaxTagsLen]; ok && len(v) == 4 {
 		rd.includeTags = binary.BigEndian.Uint32(v) > 0
 	}
+
+	// Determine data block encoding and create decoder.
+	encodingID := EncodingNone
+	if v, ok := fileInfo[FileInfoDataBlockEncoding]; ok {
+		id, err := dataBlockEncodingID(string(v))
+		if err != nil {
+			return err
+		}
+		encodingID = id
+	}
+	decoder, err := DataBlockDecoderFor(encodingID, rd.includeTags)
+	if err != nil {
+		return err
+	}
+	rd.decoder = decoder
+	rd.encodingID = encodingID
 
 	hdr, err = ReadBlockHeader(rd.r, offset)
 	if err != nil {
@@ -205,7 +235,26 @@ func (s *Scanner) Next() bool {
 			return false
 		}
 
-		s.cellIter = NewCellIterator(blk.Data, s.rd.includeTags)
+		data := blk.Data
+		if blk.Header.Type == BlockEncodedData {
+			// Encoded data blocks start with a 2-byte encoding ID prefix.
+			if len(data) < 2 {
+				s.err = fmt.Errorf("hfile: encoded data block too short")
+				return false
+			}
+			blockEncodingID := int(binary.BigEndian.Uint16(data[:2]))
+			if blockEncodingID != s.rd.encodingID {
+				s.err = fmt.Errorf("hfile: data block encoding mismatch: block has %d, expected %d", blockEncodingID, s.rd.encodingID)
+				return false
+			}
+			data, err = s.rd.decoder.Decode(data[2:])
+			if err != nil {
+				s.err = fmt.Errorf("hfile: decode data block: %w", err)
+				return false
+			}
+		}
+
+		s.cellIter = NewCellIterator(data, s.rd.includeTags)
 	}
 }
 

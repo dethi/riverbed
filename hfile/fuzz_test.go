@@ -121,7 +121,7 @@ type hfileConfig struct {
 
 // decodeParams decodes fuzz bytes into hfileConfig parameters.
 func decodeParams(data []byte) hfileConfig {
-	for len(data) < 8 {
+	for len(data) < 9 {
 		data = append(data, 0)
 	}
 
@@ -140,19 +140,24 @@ func decodeParams(data []byte) hfileConfig {
 	// valueSize: 0 to 1000
 	valueSize := int(binary.BigEndian.Uint16(data[5:7])) % 1001
 
-	// families: 1-3, from a fixed pool
+	// family: pick one from a fixed pool. In HBase each StoreFile/HFile
+	// belongs to a single column family, so we always use exactly one.
 	familyPool := []string{"a", "bb", "ccc"}
-	numFamilies := 1 + int(data[0]/uint8(len(compressions))/2)%3
-	families := familyPool[:numFamilies]
+	family := familyPool[data[0]/uint8(len(compressions))/2%uint8(len(familyPool))]
+	families := []string{family}
 
 	// qualifiers: 1-3, from a fixed pool
 	qualPool := []string{"x", "yy", "zzz"}
 	numQualifiers := 1 + int(data[7])%3
 	qualifiers := qualPool[:numQualifiers]
 
+	// dataBlockEncoding: NONE or FAST_DIFF
+	encodings := []string{"NONE", "FAST_DIFF"}
+	encoding := encodings[data[8]%uint8(len(encodings))]
+
 	return hfileConfig{
 		Compression:       compression,
-		DataBlockEncoding: "NONE",
+		DataBlockEncoding: encoding,
 		IncludeTags:       includeTags,
 		BlockSize:         blockSize,
 		CellCount:         cellCount,
@@ -182,13 +187,18 @@ func FuzzReadHFile(f *testing.F) {
 	}
 
 	// Add seed corpus entries covering interesting parameter combos.
-	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00}) // no tags, normal block, 10 cells
-	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00}) // tags, small blocks, 50 cells
-	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02}) // no tags, tiny block, 100 cells, multi-family
-	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02}) // tags, large block, 1 cell, multi-qualifier
-	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00}) // GZ compression, 20 cells
-	f.Add([]byte{0x02, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00}) // SNAPPY compression, 20 cells
-	f.Add([]byte{0x03, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00}) // ZSTD compression, 20 cells
+	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x00}) // NONE, no tags, normal block, 10 cells
+	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00, 0x00}) // NONE, tags, small blocks, 50 cells
+	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02, 0x00}) // NONE, no tags, tiny block, 100 cells
+	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02, 0x00}) // NONE, tags, large block, 1 cell, multi-qualifier
+	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00}) // NONE, GZ compression, 20 cells
+	f.Add([]byte{0x02, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00}) // NONE, SNAPPY compression, 20 cells
+	f.Add([]byte{0x03, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00}) // NONE, ZSTD compression, 20 cells
+	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x01}) // FAST_DIFF, no tags, 10 cells
+	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00, 0x01}) // FAST_DIFF, tags, 50 cells
+	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02, 0x01}) // FAST_DIFF, tiny block, 100 cells
+	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02, 0x01}) // FAST_DIFF, tags, 1 cell
+	f.Add([]byte{0x00, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x01}) // FAST_DIFF, NONE compression, 20 cells
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		srv, err := getServer()
