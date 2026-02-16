@@ -66,19 +66,51 @@ func (snappyDecompressor) String() string { return "SNAPPY" }
 
 type zstdDecompressor struct{}
 
+// Decompress handles ZSTD-compressed data in two possible formats:
+//
+//  1. Hadoop BlockCompressorStream framing — used by HBase's zstd-jni codec
+//     (org.apache.hadoop.hbase.io.compress.zstd.ZstdCodec) and the aircompressor
+//     variant. Data starts with a 4-byte big-endian decompressed block size,
+//     followed by length-prefixed compressed chunks.
+//
+//  2. Raw ZSTD frames — used by Hadoop's native ZStandardCodec
+//     (org.apache.hadoop.io.compress.ZStandardCodec). Data starts with the
+//     ZSTD frame magic bytes (0x28B52FFD).
+//
+// These two codecs both map to HBase compression ordinal 6, so the format
+// cannot be determined from the block header alone. We detect it by checking
+// for the ZSTD magic number at the start of the data.
+//
+// See: https://issues.apache.org/jira/browse/HBASE-27706
 func (zstdDecompressor) Decompress(src []byte, uncompressedSize int) ([]byte, error) {
 	r, err := zstd.NewReader(nil)
 	if err != nil {
 		return nil, fmt.Errorf("zstd new reader: %w", err)
 	}
 	defer r.Close()
+
 	out := make([]byte, 0, uncompressedSize)
+
+	if isZstdFrame(src) {
+		// Raw ZSTD frame (Hadoop native ZStandardCodec).
+		return r.DecodeAll(src, out)
+	}
+
+	// Hadoop BlockCompressorStream framing (HBase zstd-jni codec).
 	return hadoopBlockDecompress(out, src, func(dst, chunk []byte) ([]byte, error) {
 		return r.DecodeAll(chunk, dst)
 	})
 }
 
 func (zstdDecompressor) String() string { return "ZSTD" }
+
+// zstdFrameMagic is the little-endian magic number at the start of every
+// ZSTD frame (0xFD2FB528).
+var zstdFrameMagic = [4]byte{0x28, 0xB5, 0x2F, 0xFD}
+
+func isZstdFrame(src []byte) bool {
+	return len(src) >= 4 && [4]byte(src[:4]) == zstdFrameMagic
+}
 
 // hadoopBlockDecompress parses the Hadoop BlockCompressorStream framing format
 // and decompresses each chunk using the provided raw decompressor function.
