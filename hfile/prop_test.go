@@ -273,11 +273,6 @@ func verifyHFileProperties(t *rapid.T, path string, expectedCells []Cell) {
 		t.Fatalf("Open: %v", err)
 	}
 
-	// Skip multi-level indexes.
-	if rd.DataIndex().NumDataIndexLevels > 1 {
-		t.Skip("multi-level index not yet supported")
-	}
-
 	// Property 1: EntryCount matches.
 	if got := int(rd.Trailer().EntryCount); got != len(expectedCells) {
 		t.Fatalf("EntryCount = %d, want %d", got, len(expectedCells))

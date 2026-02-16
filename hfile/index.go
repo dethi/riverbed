@@ -96,44 +96,63 @@ func ReadMetaIndex(r io.ReaderAt, offset int64, numEntries int, decomp Decompres
 	return idx, nil
 }
 
-// ReadLeafIndex reads a leaf index block and returns its entries.
-func ReadLeafIndex(r io.ReaderAt, offset int64, decomp Decompressor) ([]IndexEntry, error) {
+// ReadNonRootIndex reads a non-root index block (LEAF_INDEX or INTERMEDIATE_INDEX)
+// and returns its entries. Non-root blocks use a different format from root blocks:
+//
+//	[numEntries (4 bytes)]
+//	[secondary index: (numEntries + 1) * 4 bytes — relative offsets to each entry]
+//	[entries: each is offset(8) | onDiskSize(4) | key(variable, NO vint prefix)]
+func ReadNonRootIndex(r io.ReaderAt, offset int64, decomp Decompressor) ([]IndexEntry, error) {
 	blk, err := ReadBlock(r, offset, decomp)
 	if err != nil {
-		return nil, fmt.Errorf("hfile: read leaf index block: %w", err)
+		return nil, fmt.Errorf("hfile: read non-root index block: %w", err)
 	}
-	if blk.Header.Type != BlockLeafIndex {
-		return nil, fmt.Errorf("hfile: expected LEAF_INDEX block, got %s", blk.Header.Type)
+	if blk.Header.Type != BlockLeafIndex && blk.Header.Type != BlockIntermediateIndex {
+		return nil, fmt.Errorf("hfile: expected LEAF_INDEX or INTERMEDIATE_INDEX block, got %s", blk.Header.Type)
+	}
+	return parseNonRootIndex(blk.Data)
+}
+
+func parseNonRootIndex(data []byte) ([]IndexEntry, error) {
+	if len(data) < 4 {
+		return nil, fmt.Errorf("hfile: non-root index block too small")
+	}
+	numEntries := int(binary.BigEndian.Uint32(data[0:4]))
+	if numEntries == 0 {
+		return nil, nil
 	}
 
-	// Leaf index format: numEntries (int32) followed by entries.
-	if len(blk.Data) < 4 {
-		return nil, fmt.Errorf("hfile: leaf index block too small")
+	// Secondary index: (numEntries + 1) * 4 bytes of relative offsets.
+	secIdxSize := (numEntries + 1) * 4
+	secIdxStart := 4
+	if len(data) < secIdxStart+secIdxSize {
+		return nil, fmt.Errorf("hfile: non-root index block too small for secondary index")
 	}
-	numEntries := int(binary.BigEndian.Uint32(blk.Data[0:4]))
-	data := blk.Data[4:]
 
-	entries := make([]IndexEntry, 0, numEntries)
-	off := 0
+	// Read secondary index offsets (relative to start of entries section).
+	secIdx := make([]int, numEntries+1)
+	for i := range secIdx {
+		secIdx[i] = int(binary.BigEndian.Uint32(data[secIdxStart+i*4 : secIdxStart+i*4+4]))
+	}
+
+	entriesStart := secIdxStart + secIdxSize
+	entries := make([]IndexEntry, numEntries)
 	for i := range numEntries {
-		if off+12 > len(data) {
-			return nil, fmt.Errorf("hfile: leaf index entry %d: not enough data", i)
+		entryOff := entriesStart + secIdx[i]
+		entryEnd := entriesStart + secIdx[i+1]
+		if entryOff+12 > len(data) || entryEnd > len(data) {
+			return nil, fmt.Errorf("hfile: non-root index entry %d: not enough data", i)
 		}
-		blockOffset := int64(binary.BigEndian.Uint64(data[off : off+8]))
-		dataSize := int32(binary.BigEndian.Uint32(data[off+8 : off+12]))
-		off += 12
+		blockOffset := int64(binary.BigEndian.Uint64(data[entryOff : entryOff+8]))
+		dataSize := int32(binary.BigEndian.Uint32(data[entryOff+8 : entryOff+12]))
+		key := make([]byte, entryEnd-entryOff-12)
+		copy(key, data[entryOff+12:entryEnd])
 
-		key, n, err := readByteArray(data, off)
-		if err != nil {
-			return nil, fmt.Errorf("hfile: leaf index entry %d key: %w", i, err)
-		}
-		off += n
-
-		entries = append(entries, IndexEntry{
+		entries[i] = IndexEntry{
 			BlockOffset: blockOffset,
 			DataSize:    dataSize,
 			Key:         key,
-		})
+		}
 	}
 	return entries, nil
 }

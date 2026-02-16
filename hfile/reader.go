@@ -152,17 +152,32 @@ func (rd *Reader) Scanner() *Scanner {
 // Scanner iterates over cells in an HFile in key order.
 type Scanner struct {
 	rd       *Reader
-	blockIdx int // current index into root data index
+	blockIdx int // current index into dataBlocks
 	cellIter *CellIterator
 	cell     *Cell
 	err      error
 	started  bool
+
+	// dataBlocks holds the flat list of data block entries.
+	// For single-level indexes, this is the root index entries directly.
+	// For multi-level indexes, this is built by traversing the index tree.
+	dataBlocks []IndexEntry
 }
 
 // Next advances to the next cell. Returns false when done or on error.
 func (s *Scanner) Next() bool {
 	if s.err != nil {
 		return false
+	}
+
+	// Lazily resolve the flat list of data block entries on first call.
+	if s.dataBlocks == nil {
+		entries, err := s.resolveDataBlocks()
+		if err != nil {
+			s.err = err
+			return false
+		}
+		s.dataBlocks = entries
 	}
 
 	for {
@@ -184,18 +199,11 @@ func (s *Scanner) Next() bool {
 		}
 		s.started = true
 
-		entries := s.rd.dataIndex.Entries
-		if s.blockIdx >= len(entries) {
+		if s.blockIdx >= len(s.dataBlocks) {
 			return false // no more blocks
 		}
 
-		// For multi-level indexes, we need to read leaf index blocks.
-		if s.rd.dataIndex.NumDataIndexLevels > 1 {
-			s.err = fmt.Errorf("hfile: multi-level index scanning not yet supported")
-			return false
-		}
-
-		entry := entries[s.blockIdx]
+		entry := s.dataBlocks[s.blockIdx]
 		blk, err := ReadBlock(s.rd.r, entry.BlockOffset, s.rd.decomp)
 		if err != nil {
 			s.err = fmt.Errorf("hfile: read data block %d: %w", s.blockIdx, err)
@@ -204,6 +212,52 @@ func (s *Scanner) Next() bool {
 
 		s.cellIter = NewCellIterator(blk.Data, s.rd.includeTags)
 	}
+}
+
+// resolveDataBlocks returns the flat list of data block entries by traversing
+// the index tree. For single-level indexes, this is the root entries directly.
+func (s *Scanner) resolveDataBlocks() ([]IndexEntry, error) {
+	idx := s.rd.dataIndex
+	if idx.NumDataIndexLevels <= 1 {
+		return idx.Entries, nil
+	}
+
+	// Multi-level: root entries point to intermediate or leaf blocks.
+	// Traverse the tree to collect all leaf-level data block entries.
+	var dataBlocks []IndexEntry
+	for i, entry := range idx.Entries {
+		entries, err := s.collectLeafEntries(entry.BlockOffset, idx.NumDataIndexLevels-1)
+		if err != nil {
+			return nil, fmt.Errorf("hfile: resolve data blocks from root entry %d: %w", i, err)
+		}
+		dataBlocks = append(dataBlocks, entries...)
+	}
+	return dataBlocks, nil
+}
+
+// collectLeafEntries recursively descends the index tree from a non-root block.
+// remainingLevels indicates how many more levels to descend (1 = this is a leaf).
+func (s *Scanner) collectLeafEntries(offset int64, remainingLevels uint32) ([]IndexEntry, error) {
+	entries, err := ReadNonRootIndex(s.rd.r, offset, s.rd.decomp)
+	if err != nil {
+		return nil, err
+	}
+
+	if remainingLevels <= 1 {
+		// These entries point directly to data blocks.
+		return entries, nil
+	}
+
+	// Intermediate level: recurse into children.
+	var result []IndexEntry
+	for _, entry := range entries {
+		children, err := s.collectLeafEntries(entry.BlockOffset, remainingLevels-1)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, children...)
+	}
+	return result, nil
 }
 
 // Cell returns the current cell.

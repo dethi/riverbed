@@ -226,11 +226,6 @@ func verifyHFile(t *testing.T, cfg hfileConfig) {
 		t.Fatalf("Open: %v", err)
 	}
 
-	// Skip multi-level indexes (not yet supported by the Go reader).
-	if rd.DataIndex().NumDataIndexLevels > 1 {
-		t.Skip("multi-level index not yet supported")
-	}
-
 	// Sort families and qualifiers the same way Java does.
 	families := make([]string, len(cfg.Families))
 	copy(families, cfg.Families)
