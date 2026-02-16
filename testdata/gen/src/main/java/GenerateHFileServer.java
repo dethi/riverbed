@@ -9,7 +9,6 @@ import org.apache.hadoop.hbase.ArrayBackedTag;
 import org.apache.hadoop.hbase.Tag;
 import org.apache.hadoop.hbase.io.compress.Compression;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
-import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileContext;
 import org.apache.hadoop.hbase.io.hfile.HFileContextBuilder;
@@ -40,10 +39,8 @@ public class GenerateHFileServer {
     public static void main(String[] args) throws IOException {
         Gson gson = new Gson();
         Configuration conf = HBaseConfiguration.create();
-        // Disable block cache to avoid background threads and shutdown hooks.
-        conf.setFloat("hfile.block.cache.size", 0);
+
         FileSystem fs = FileSystem.getLocal(conf);
-        CacheConfig cacheConf = new CacheConfig(conf);
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
 
         String line;
@@ -53,7 +50,7 @@ public class GenerateHFileServer {
 
             try {
                 Config cfg = gson.fromJson(line, Config.class);
-                generateHFile(conf, fs, cacheConf, cfg);
+                generateHFile(conf, fs, cfg);
                 System.out.println(cfg.outputPath);
                 System.out.flush();
             } catch (Exception e) {
@@ -64,8 +61,12 @@ public class GenerateHFileServer {
         }
     }
 
-    private static void generateHFile(Configuration conf, FileSystem fs, CacheConfig cacheConf, Config cfg) throws IOException {
+    private static void generateHFile(Configuration conf, FileSystem fs, Config cfg) throws IOException {
         Path path = new Path(cfg.outputPath);
+
+        // TODO: consider adding the following lines to switch between zstd-jni and hadoop-native
+        // conf.set("hbase.io.compress.zstd.codec", "org.apache.hadoop.hbase.io.compress.zstd.ZstdCodec");
+        // Compression.Algorithm.ZSTD.reload(conf);
 
         HFileContext context = new HFileContextBuilder()
                 .withCompression(Compression.Algorithm.valueOf(cfg.compression))
@@ -74,7 +75,7 @@ public class GenerateHFileServer {
                 .withBlockSize(cfg.blockSize)
                 .build();
 
-        HFile.Writer writer = HFile.getWriterFactory(conf, cacheConf)
+        HFile.Writer writer = HFile.getWriterFactoryNoCache(conf)
                 .withPath(fs, path)
                 .withFileContext(context)
                 .create();

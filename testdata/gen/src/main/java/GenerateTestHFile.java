@@ -5,7 +5,6 @@ import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.io.compress.Compression;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
-import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileContext;
 import org.apache.hadoop.hbase.io.hfile.HFileContextBuilder;
@@ -31,7 +30,7 @@ public class GenerateTestHFile {
                 .withIncludesTags(false)
                 .build();
 
-        HFile.Writer writer = HFile.getWriterFactory(conf, new CacheConfig(conf))
+        HFile.Writer writer = HFile.getWriterFactoryNoCache(conf)
                 .withPath(fs, path)
                 .withFileContext(context)
                 .create();

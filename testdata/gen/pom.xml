@@ -10,8 +10,7 @@
   <properties>
     <maven.compiler.source>11</maven.compiler.source>
     <maven.compiler.target>11</maven.compiler.target>
-    <hbase.version>2.6.4</hbase.version>
-    <hadoop.profile>3.0</hadoop.profile>
+    <hbase.version>2.6.4-hadoop3</hbase.version>
     <exec.mainClass>GenerateTestHFile</exec.mainClass>
   </properties>
 
