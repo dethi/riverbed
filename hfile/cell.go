@@ -9,10 +9,10 @@ import (
 type CellType byte
 
 const (
-	CellTypePut              CellType = 4
-	CellTypeDelete           CellType = 8
-	CellTypeDeleteColumn     CellType = 12
-	CellTypeDeleteFamily     CellType = 14
+	CellTypePut          CellType = 4
+	CellTypeDelete       CellType = 8
+	CellTypeDeleteColumn CellType = 12
+	CellTypeDeleteFamily CellType = 14
 )
 
 func (t CellType) String() string {

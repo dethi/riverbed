@@ -22,10 +22,6 @@ type BloomFilter struct {
 	decomp Decompressor
 }
 
-const (
-	hashMurmur = 1
-)
-
 // ReadBloomFilter reads the bloom filter metadata from a GENERAL_BLOOM_META block.
 func ReadBloomFilter(r io.ReaderAt, offset int64, decomp Decompressor) (*BloomFilter, error) {
 	blk, err := ReadBlock(r, offset, decomp)

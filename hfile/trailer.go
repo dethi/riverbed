@@ -12,28 +12,28 @@ import (
 )
 
 const (
-	trailerSize     = 4096 // v3 trailer is a fixed 4096 bytes
-	versionSize     = 4    // 4-byte version at end of file
-	majorVersionV3  = 3
+	trailerSize    = 4096 // v3 trailer is a fixed 4096 bytes
+	versionSize    = 4    // 4-byte version at end of file
+	majorVersionV3 = 3
 )
 
 // Trailer holds the parsed HFile trailer.
 type Trailer struct {
-	MajorVersion           int
-	MinorVersion           int
-	FileInfoOffset         uint64
-	LoadOnOpenDataOffset   uint64
+	MajorVersion              int
+	MinorVersion              int
+	FileInfoOffset            uint64
+	LoadOnOpenDataOffset      uint64
 	UncompressedDataIndexSize uint64
-	TotalUncompressedBytes uint64
-	DataIndexCount         uint32
-	MetaIndexCount         uint32
-	EntryCount             uint64
-	NumDataIndexLevels     uint32
-	FirstDataBlockOffset   uint64
-	LastDataBlockOffset    uint64
-	ComparatorClassName    string
-	CompressionCodec       uint32
-	EncryptionKey          []byte
+	TotalUncompressedBytes    uint64
+	DataIndexCount            uint32
+	MetaIndexCount            uint32
+	EntryCount                uint64
+	NumDataIndexLevels        uint32
+	FirstDataBlockOffset      uint64
+	LastDataBlockOffset       uint64
+	ComparatorClassName       string
+	CompressionCodec          uint32
+	EncryptionKey             []byte
 }
 
 // ReadTrailer reads and parses the HFile trailer from the end of the file.

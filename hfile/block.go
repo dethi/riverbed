@@ -75,12 +75,12 @@ const blockHeaderSize = 33
 
 // BlockHeader contains the parsed header of an HFile block.
 type BlockHeader struct {
-	Type                    BlockType
-	OnDiskSizeWithoutHeader int32
-	UncompressedSize        int32
-	PrevBlockOffset         int64
-	ChecksumType            byte
-	BytesPerChecksum        int32
+	Type                     BlockType
+	OnDiskSizeWithoutHeader  int32
+	UncompressedSize         int32
+	PrevBlockOffset          int64
+	ChecksumType             byte
+	BytesPerChecksum         int32
 	OnDiskDataSizeWithHeader int32
 }
 

@@ -15,11 +15,11 @@ var pbMagic = [4]byte{'P', 'B', 'U', 'F'}
 
 // Well-known FileInfo keys.
 const (
-	FileInfoAvgKeyLen          = "hfile.AVG_KEY_LEN"
-	FileInfoAvgValueLen        = "hfile.AVG_VALUE_LEN"
-	FileInfoLastKey            = "hfile.LASTKEY"
-	FileInfoMaxMemstoreTS      = "MAX_MEMSTORE_TS_KEY"
-	FileInfoDataBlockEncoding  = "hfile.DATA_BLOCK_ENCODING"
+	FileInfoAvgKeyLen         = "hfile.AVG_KEY_LEN"
+	FileInfoAvgValueLen       = "hfile.AVG_VALUE_LEN"
+	FileInfoLastKey           = "hfile.LASTKEY"
+	FileInfoMaxMemstoreTS     = "MAX_MEMSTORE_TS_KEY"
+	FileInfoDataBlockEncoding = "hfile.DATA_BLOCK_ENCODING"
 )
 
 // ReadFileInfo reads the FILE_INFO block at the given offset and returns the key-value map.
