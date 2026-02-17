@@ -1,9 +1,11 @@
 package hfile
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sort"
 )
 
 // FileInfo key for max tags length.
@@ -294,6 +296,86 @@ func (s *Scanner) nextDataBlock() (IndexEntry, bool) {
 		}
 		s.stack = append(s.stack, indexLevel{entries: children, pos: -1})
 	}
+}
+
+// Seek positions the scanner at the first cell whose key is >= the given key.
+// The key uses the standard HBase cell key encoding: rowLen(2) + row + familyLen(1) +
+// family + qualifier + timestamp(8) + type(1). It may be truncated at any field
+// boundary to seek by prefix (e.g. just rowLen + row to seek to a row).
+// Returns true if a cell was found, false if no cell >= key exists or on error.
+// After Seek, Cell() returns the found cell and subsequent Next() calls continue
+// from there.
+func (s *Scanner) Seek(key []byte) bool {
+	// Reset scanner state.
+	s.err = nil
+	s.cell = nil
+	s.cellIter = nil
+	s.started = true
+
+	numLevels := max(int(s.rd.dataIndex.NumDataIndexLevels), 1)
+	s.stack = make([]indexLevel, 0, numLevels)
+
+	entries := s.rd.dataIndex.Entries
+	for level := range numLevels {
+		pos := searchIndex(entries, key)
+
+		if level < numLevels-1 {
+			// Intermediate level: descend into the child block.
+			if pos < 0 {
+				pos = 0
+			}
+			s.stack = append(s.stack, indexLevel{entries: entries, pos: pos})
+			entry := entries[pos]
+			children, err := ReadNonRootIndex(s.rd.r, entry.BlockOffset, s.rd.decomp)
+			if err != nil {
+				s.err = fmt.Errorf("hfile: seek: read index block at depth %d: %w", level+1, err)
+				return false
+			}
+			entries = children
+		} else {
+			// Leaf level: set pos-1 so nextDataBlock() advances to the right block.
+			if pos < 0 {
+				pos = 0
+			}
+			s.stack = append(s.stack, indexLevel{entries: entries, pos: pos - 1})
+		}
+	}
+
+	// Scan forward from the positioned block, skipping cells with key < seek key.
+	for s.Next() {
+		if bytes.Compare(cellKey(s.cell), key) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// searchIndex returns the index of the last entry whose Key <= key.
+// Returns -1 if key is before all entries.
+func searchIndex(entries []IndexEntry, key []byte) int {
+	// sort.Search finds the first i where entries[i].Key > key.
+	n := sort.Search(len(entries), func(i int) bool {
+		return bytes.Compare(entries[i].Key, key) > 0
+	})
+	return n - 1
+}
+
+// cellKey builds the raw HBase cell key from a Cell's components.
+func cellKey(c *Cell) []byte {
+	keyLen := 2 + len(c.Row) + 1 + len(c.Family) + len(c.Qualifier) + 8 + 1
+	key := make([]byte, keyLen)
+	off := 0
+	binary.BigEndian.PutUint16(key[off:], uint16(len(c.Row)))
+	off += 2
+	off += copy(key[off:], c.Row)
+	key[off] = byte(len(c.Family))
+	off++
+	off += copy(key[off:], c.Family)
+	off += copy(key[off:], c.Qualifier)
+	binary.BigEndian.PutUint64(key[off:], c.Timestamp)
+	off += 8
+	key[off] = byte(c.Type)
+	return key
 }
 
 // Cell returns the current cell.
