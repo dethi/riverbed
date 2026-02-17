@@ -78,6 +78,9 @@ func ReadTrailer(r io.ReaderAt, fileSize int64) (*Trailer, error) {
 	if prefixLen < 0 {
 		return nil, fmt.Errorf("hfile: invalid trailer protobuf length prefix")
 	}
+	if prefixLen+int(msgLen) > len(pbData) {
+		return nil, fmt.Errorf("hfile: trailer protobuf length %d exceeds available data", msgLen)
+	}
 
 	msgData := pbData[prefixLen : prefixLen+int(msgLen)]
 	var pbTrailer pb.FileTrailerProto
