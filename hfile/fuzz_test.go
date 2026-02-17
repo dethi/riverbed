@@ -2,6 +2,7 @@ package hfile
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -139,4 +140,14 @@ func FuzzReadHFile(f *testing.F) {
 
 		verifyHFileProperties(t, r.OutputPath, r.BloomType, expectedCells)
 	}))
+}
+
+func FuzzNoCrash(f *testing.F) {
+	f.Fuzz(func(t *testing.T, b []byte) {
+		if r, err := Open(bytes.NewReader(b), int64(len(b))); err == nil {
+			scan := r.Scanner()
+			for scan.Next() {
+			}
+		}
+	})
 }
