@@ -133,6 +133,10 @@ func (d fastDiffDecoder) Decode(src []byte) ([]byte, error) {
 		// Key bytes excluding timestamp(8) + type(1).
 		keyDataLen := keyLen - 9
 
+		if commonPrefix > keyDataLen {
+			return nil, fmt.Errorf("hfile: FAST_DIFF common prefix %d exceeds key data length %d", commonPrefix, keyDataLen)
+		}
+
 		if isFirst {
 			// First cell: read the entire key (excluding timestamp+type).
 			if pos+keyDataLen > len(src) {
