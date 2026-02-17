@@ -146,7 +146,13 @@ func (d fastDiffDecoder) Decode(src []byte) ([]byte, error) {
 			pos += keyDataLen - commonPrefix
 
 			rowLenWithSize = int(binary.BigEndian.Uint16(keyBuf[:2])) + 2
+			if rowLenWithSize >= keyDataLen {
+				return nil, fmt.Errorf("hfile: FAST_DIFF row length %d exceeds key data length %d", rowLenWithSize, keyDataLen)
+			}
 			famLenWithSize = int(keyBuf[rowLenWithSize]) + 1
+			if rowLenWithSize+famLenWithSize > keyDataLen {
+				return nil, fmt.Errorf("hfile: FAST_DIFF row+family length %d exceeds key data length %d", rowLenWithSize+famLenWithSize, keyDataLen)
+			}
 		} else if commonPrefix < 2 {
 			// Row length bytes changed.
 			oldRowLenWithSize := rowLenWithSize
@@ -159,6 +165,9 @@ func (d fastDiffDecoder) Decode(src []byte) ([]byte, error) {
 			copy(keyBuf[commonPrefix:2], src[pos:pos+need])
 			pos += need
 			rowLenWithSize = int(binary.BigEndian.Uint16(keyBuf[:2])) + 2
+			if rowLenWithSize >= keyDataLen {
+				return nil, fmt.Errorf("hfile: FAST_DIFF row length %d exceeds key data length %d", rowLenWithSize, keyDataLen)
+			}
 
 			// Ensure key buffer is large enough after row length change.
 			if len(keyBuf) < keyLen {
