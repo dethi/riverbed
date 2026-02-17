@@ -33,7 +33,7 @@ func ReadBloomFilter(r io.ReaderAt, offset int64, decomp Decompressor) (*BloomFi
 	}
 
 	data := blk.Data
-	if len(data) < 36 { // 8+4+4+8+8+4
+	if len(data) < 40 { // 4(version)+8+4+4+8+8+4
 		return nil, fmt.Errorf("hfile: bloom meta block too small")
 	}
 
@@ -43,6 +43,11 @@ func ReadBloomFilter(r io.ReaderAt, offset int64, decomp Decompressor) (*BloomFi
 	}
 
 	off := 0
+	version := int32(binary.BigEndian.Uint32(data[off : off+4]))
+	off += 4
+	if version != 3 {
+		return nil, fmt.Errorf("hfile: unsupported bloom filter version %d", version)
+	}
 	bf.TotalByteSize = int64(binary.BigEndian.Uint64(data[off : off+8]))
 	off += 8
 	bf.HashCount = int32(binary.BigEndian.Uint32(data[off : off+4]))
@@ -169,13 +174,13 @@ func murmurHash(key []byte, seed int32) int32 {
 	tail := nblocks << 2
 	left := length - tail
 	if left >= 3 {
-		h ^= int32(key[tail+2]) << 16
+		h ^= int32(int8(key[tail+2])) << 16
 	}
 	if left >= 2 {
-		h ^= int32(key[tail+1]) << 8
+		h ^= int32(int8(key[tail+1])) << 8
 	}
 	if left >= 1 {
-		h ^= int32(key[tail])
+		h ^= int32(int8(key[tail]))
 		h *= m
 	}
 

@@ -32,6 +32,7 @@ type recipe struct {
 	OutputPath        string     `json:"outputPath"`
 	Compression       string     `json:"compression"`
 	DataBlockEncoding string     `json:"dataBlockEncoding"`
+	BloomType         string     `json:"bloomType"`
 	BlockSize         int        `json:"blockSize"`
 	Seed              int64      `json:"seed"`
 	Family            string     `json:"family"`
@@ -44,6 +45,7 @@ func genRecipe(t *rapid.T) recipe {
 	seed := rapid.Int64().Draw(t, "seed")
 	compression := rapid.SampledFrom([]string{"NONE", "GZ", "SNAPPY", "ZSTD"}).Draw(t, "compression")
 	encoding := rapid.SampledFrom([]string{"NONE", "FAST_DIFF"}).Draw(t, "dataBlockEncoding")
+	bloomType := rapid.SampledFrom([]string{"NONE", "ROW"}).Draw(t, "bloomType")
 	blockSize := rapid.IntRange(64, 65536).Draw(t, "blockSize")
 	family := rapid.StringMatching(`[a-z]{1,5}`).Draw(t, "family")
 
@@ -57,6 +59,7 @@ func genRecipe(t *rapid.T) recipe {
 		Seed:              seed,
 		Compression:       compression,
 		DataBlockEncoding: encoding,
+		BloomType:         bloomType,
 		BlockSize:         blockSize,
 		Family:            family,
 		Groups:            groups,
@@ -253,11 +256,11 @@ func TestHFileProperties(t *testing.T) {
 			rt.Fatalf("generate hfile: %v", err)
 		}
 
-		verifyHFileProperties(rt, r.OutputPath, expectedCells)
+		verifyHFileProperties(rt, r.OutputPath, r.BloomType, expectedCells)
 	})
 }
 
-func verifyHFileProperties(t *rapid.T, path string, expectedCells []Cell) {
+func verifyHFileProperties(t *rapid.T, path string, bloomType string, expectedCells []Cell) {
 	t.Helper()
 
 	file, err := os.Open(path)
@@ -332,5 +335,34 @@ func verifyHFileProperties(t *rapid.T, path string, expectedCells []Cell) {
 	// Property 5: Completeness.
 	if count != len(expectedCells) {
 		t.Errorf("scanned %d cells, want %d", count, len(expectedCells))
+	}
+
+	// Property 6: Bloom filter presence and correctness.
+	bf := rd.BloomFilter()
+	if bloomType == "NONE" {
+		if bf != nil {
+			t.Errorf("bloom filter present but bloomType=NONE")
+		}
+	} else {
+		if bf == nil {
+			t.Errorf("bloom filter absent but bloomType=%s", bloomType)
+		} else {
+			// All row keys that exist must return MayContain=true.
+			seen := map[string]struct{}{}
+			for i := range expectedCells {
+				row := string(expectedCells[i].Row)
+				if _, ok := seen[row]; ok {
+					continue
+				}
+				seen[row] = struct{}{}
+				ok, err := bf.MayContain(expectedCells[i].Row)
+				if err != nil {
+					t.Fatalf("bloom MayContain: %v", err)
+				}
+				if !ok {
+					t.Errorf("bloom filter says row %x not present", expectedCells[i].Row)
+				}
+			}
+		}
 	}
 }

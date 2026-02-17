@@ -1,5 +1,4 @@
 import com.google.gson.Gson;
-import com.google.gson.annotations.SerializedName;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -9,9 +8,10 @@ import org.apache.hadoop.hbase.ArrayBackedTag;
 import org.apache.hadoop.hbase.Tag;
 import org.apache.hadoop.hbase.io.compress.Compression;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
-import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileContext;
 import org.apache.hadoop.hbase.io.hfile.HFileContextBuilder;
+import org.apache.hadoop.hbase.regionserver.BloomType;
+import org.apache.hadoop.hbase.regionserver.StoreFileWriter;
 import org.apache.hadoop.hbase.util.Bytes;
 
 import java.io.BufferedReader;
@@ -45,6 +45,7 @@ public class GenerateHFileServer {
         String outputPath;
         String compression = "NONE";
         String dataBlockEncoding = "NONE";
+        String bloomType = "NONE";
         boolean includeTags = false;
         int blockSize = 65536;
         int cellCount = 10;
@@ -102,10 +103,15 @@ public class GenerateHFileServer {
                 .withBlockSize(cfg.blockSize)
                 .build();
 
-        HFile.Writer writer = HFile.getWriterFactoryNoCache(conf)
-                .withPath(fs, path)
+        BloomType bloom = BloomType.valueOf(cfg.bloomType);
+        long maxKeyCount = (long) cfg.cellCount * cfg.families.length * cfg.qualifiers.length;
+
+        StoreFileWriter writer = new StoreFileWriter.Builder(conf, fs)
+                .withFilePath(path)
                 .withFileContext(context)
-                .create();
+                .withBloomType(bloom)
+                .withMaxKeyCount(maxKeyCount)
+                .build();
 
         // Sort families and qualifiers to ensure HBase key order.
         String[] families = cfg.families.clone();
@@ -240,10 +246,20 @@ public class GenerateHFileServer {
                 .withBlockSize(cfg.blockSize)
                 .build();
 
-        HFile.Writer writer = HFile.getWriterFactoryNoCache(conf)
-                .withPath(fs, path)
+        BloomType bloom = BloomType.valueOf(cfg.bloomType);
+
+        // Estimate max key count for bloom filter sizing.
+        long maxKeyCount = 0;
+        for (RowGroup group : cfg.groups) {
+            maxKeyCount += (long) group.rowCount * group.cells.length;
+        }
+
+        StoreFileWriter writer = new StoreFileWriter.Builder(conf, fs)
+                .withFilePath(path)
                 .withFileContext(context)
-                .create();
+                .withBloomType(bloom)
+                .withMaxKeyCount(maxKeyCount)
+                .build();
 
         byte[] familyBytes = Bytes.toBytes(cfg.family);
 

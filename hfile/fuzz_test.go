@@ -110,6 +110,7 @@ type hfileConfig struct {
 	OutputPath        string   `json:"outputPath"`
 	Compression       string   `json:"compression"`
 	DataBlockEncoding string   `json:"dataBlockEncoding"`
+	BloomType         string   `json:"bloomType"`
 	IncludeTags       bool     `json:"includeTags"`
 	BlockSize         int      `json:"blockSize"`
 	CellCount         int      `json:"cellCount"`
@@ -121,7 +122,7 @@ type hfileConfig struct {
 
 // decodeParams decodes fuzz bytes into hfileConfig parameters.
 func decodeParams(data []byte) hfileConfig {
-	for len(data) < 9 {
+	for len(data) < 10 {
 		data = append(data, 0)
 	}
 
@@ -155,9 +156,14 @@ func decodeParams(data []byte) hfileConfig {
 	encodings := []string{"NONE", "FAST_DIFF"}
 	encoding := encodings[data[8]%uint8(len(encodings))]
 
+	// bloomType: NONE or ROW
+	bloomTypes := []string{"NONE", "ROW"}
+	bloomType := bloomTypes[data[9]%uint8(len(bloomTypes))]
+
 	return hfileConfig{
 		Compression:       compression,
 		DataBlockEncoding: encoding,
+		BloomType:         bloomType,
 		IncludeTags:       includeTags,
 		BlockSize:         blockSize,
 		CellCount:         cellCount,
@@ -187,18 +193,23 @@ func FuzzReadHFile(f *testing.F) {
 	}
 
 	// Add seed corpus entries covering interesting parameter combos.
-	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x00}) // NONE, no tags, normal block, 10 cells
-	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00, 0x00}) // NONE, tags, small blocks, 50 cells
-	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02, 0x00}) // NONE, no tags, tiny block, 100 cells
-	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02, 0x00}) // NONE, tags, large block, 1 cell, multi-qualifier
-	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00}) // NONE, GZ compression, 20 cells
-	f.Add([]byte{0x02, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00}) // NONE, SNAPPY compression, 20 cells
-	f.Add([]byte{0x03, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00}) // NONE, ZSTD compression, 20 cells
-	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x01}) // FAST_DIFF, no tags, 10 cells
-	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00, 0x01}) // FAST_DIFF, tags, 50 cells
-	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02, 0x01}) // FAST_DIFF, tiny block, 100 cells
-	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02, 0x01}) // FAST_DIFF, tags, 1 cell
-	f.Add([]byte{0x00, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x01}) // FAST_DIFF, NONE compression, 20 cells
+	// 10 bytes: [compression+tags+family] [blockSize:2] [cellCount:2] [valueSize:2] [qualifiers] [encoding] [bloom]
+	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x00, 0x00}) // NONE, no tags, normal block, 10 cells, no bloom
+	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00, 0x00, 0x00}) // NONE, tags, small blocks, 50 cells, no bloom
+	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02, 0x00, 0x00}) // NONE, no tags, tiny block, 100 cells, no bloom
+	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02, 0x00, 0x00}) // NONE, tags, large block, 1 cell, multi-qualifier, no bloom
+	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00, 0x00}) // GZ compression, 20 cells, no bloom
+	f.Add([]byte{0x02, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00, 0x00}) // SNAPPY compression, 20 cells, no bloom
+	f.Add([]byte{0x03, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00, 0x00}) // ZSTD compression, 20 cells, no bloom
+	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x01, 0x00}) // FAST_DIFF, no tags, 10 cells, no bloom
+	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00, 0x01, 0x00}) // FAST_DIFF, tags, 50 cells, no bloom
+	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02, 0x01, 0x00}) // FAST_DIFF, tiny block, 100 cells, no bloom
+	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02, 0x01, 0x00}) // FAST_DIFF, tags, 1 cell, no bloom
+	f.Add([]byte{0x00, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x01, 0x00}) // FAST_DIFF, NONE compression, 20 cells, no bloom
+	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x00, 0x01}) // NONE, no tags, 10 cells, ROW bloom
+	f.Add([]byte{0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x06, 0x00, 0x00, 0x01}) // NONE, tiny block, 100 cells, ROW bloom
+	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x01, 0x01}) // FAST_DIFF, 10 cells, ROW bloom
+	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00, 0x01}) // GZ, tags, 20 cells, ROW bloom
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		srv, err := getServer()
@@ -333,5 +344,29 @@ func verifyHFile(t *testing.T, cfg hfileConfig) {
 	// Property 3: Scanner yields exactly totalCells.
 	if count != totalCells {
 		t.Errorf("scanned %d cells, want %d", count, totalCells)
+	}
+
+	// Property 7: Bloom filter presence and correctness.
+	bf := rd.BloomFilter()
+	if cfg.BloomType == "NONE" {
+		if bf != nil {
+			t.Errorf("bloom filter present but bloomType=NONE")
+		}
+	} else {
+		if bf == nil {
+			t.Errorf("bloom filter absent but bloomType=%s", cfg.BloomType)
+		} else {
+			// All rows that exist must return MayContain=true.
+			for i := range cfg.CellCount {
+				row := []byte(fmt.Sprintf("row-%05d", i))
+				ok, err := bf.MayContain(row)
+				if err != nil {
+					t.Fatalf("bloom MayContain: %v", err)
+				}
+				if !ok {
+					t.Errorf("bloom filter says row %q not present", row)
+				}
+			}
+		}
 	}
 }
