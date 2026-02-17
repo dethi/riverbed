@@ -163,6 +163,11 @@ func ReadBlock(r io.ReaderAt, offset int64, decomp Decompressor) (*Block, error)
 		}
 	}
 
+	// Validate uncompressed size before allocating.
+	if hdr.UncompressedSize < 0 {
+		return nil, fmt.Errorf("hfile: invalid uncompressed size %d at offset %d", hdr.UncompressedSize, offset)
+	}
+
 	// Decompress the data portion.
 	payload, err := decomp.Decompress(onDisk[:dataSize], int(hdr.UncompressedSize))
 	if err != nil {
