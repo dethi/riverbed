@@ -2,17 +2,16 @@ package hfile
 
 import (
 	"bufio"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
-	"strings"
 	"sync"
 	"testing"
+
+	"pgregory.net/rapid"
 )
 
 var (
@@ -78,10 +77,6 @@ func getServer() (*hfileServer, error) {
 	return serverInst, serverInitErr
 }
 
-func (s *hfileServer) generate(cfg hfileConfig) error {
-	return s.generateRaw(cfg)
-}
-
 func (s *hfileServer) generateRaw(v any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -106,267 +101,42 @@ func (s *hfileServer) generateRaw(v any) error {
 	return nil
 }
 
-type hfileConfig struct {
-	OutputPath        string   `json:"outputPath"`
-	Compression       string   `json:"compression"`
-	DataBlockEncoding string   `json:"dataBlockEncoding"`
-	BloomType         string   `json:"bloomType"`
-	IncludeTags       bool     `json:"includeTags"`
-	BlockSize         int      `json:"blockSize"`
-	CellCount         int      `json:"cellCount"`
-	Families          []string `json:"families"`
-	Qualifiers        []string `json:"qualifiers"`
-	ValueSize         int      `json:"valueSize"`
-	Timestamp         int64    `json:"timestamp"`
-}
-
-// decodeParams decodes fuzz bytes into hfileConfig parameters.
-func decodeParams(data []byte) hfileConfig {
-	for len(data) < 10 {
-		data = append(data, 0)
-	}
-
-	// compression: NONE or GZ
-	compressions := []string{"NONE", "GZ", "SNAPPY", "ZSTD"}
-	compression := compressions[data[0]%uint8(len(compressions))]
-
-	includeTags := data[0]/uint8(len(compressions))%2 == 1
-
-	// blockSize: 64 to 65536
-	blockSize := 64 + int(binary.BigEndian.Uint16(data[1:3]))%(65536-64+1)
-
-	// cellCount: 1 to 1000
-	cellCount := 1 + int(binary.BigEndian.Uint16(data[3:5]))%1000
-
-	// valueSize: 0 to 1000
-	valueSize := int(binary.BigEndian.Uint16(data[5:7])) % 1001
-
-	// family: pick one from a fixed pool. In HBase each StoreFile/HFile
-	// belongs to a single column family, so we always use exactly one.
-	familyPool := []string{"a", "bb", "ccc"}
-	family := familyPool[data[0]/uint8(len(compressions))/2%uint8(len(familyPool))]
-	families := []string{family}
-
-	// qualifiers: 1-3, from a fixed pool
-	qualPool := []string{"x", "yy", "zzz"}
-	numQualifiers := 1 + int(data[7])%3
-	qualifiers := qualPool[:numQualifiers]
-
-	// dataBlockEncoding: NONE or FAST_DIFF
-	encodings := []string{"NONE", "FAST_DIFF"}
-	encoding := encodings[data[8]%uint8(len(encodings))]
-
-	// bloomType: NONE or ROW
-	bloomTypes := []string{"NONE", "ROW"}
-	bloomType := bloomTypes[data[9]%uint8(len(bloomTypes))]
-
-	return hfileConfig{
-		Compression:       compression,
-		DataBlockEncoding: encoding,
-		BloomType:         bloomType,
-		IncludeTags:       includeTags,
-		BlockSize:         blockSize,
-		CellCount:         cellCount,
-		Families:          families,
-		Qualifiers:        qualifiers,
-		ValueSize:         valueSize,
-		Timestamp:         1700000000000,
-	}
-}
-
-// generateExpectedValue produces the same value bytes as the Java side.
-func generateExpectedValue(index, valueSize int) string {
-	if valueSize == 0 {
-		return ""
-	}
-	s := fmt.Sprintf("%0*d", valueSize, index)
-	if len(s) > valueSize {
-		s = s[len(s)-valueSize:]
-	}
-	return s
-}
-
 func FuzzReadHFile(f *testing.F) {
 	mvnOnce.Do(checkMvn)
 	if !mvnAvailable {
 		f.Skip("mvn not available or compilation failed")
 	}
 
-	// Add seed corpus entries covering interesting parameter combos.
-	// 10 bytes: [compression+tags+family] [blockSize:2] [cellCount:2] [valueSize:2] [qualifiers] [encoding] [bloom]
-	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x00, 0x00}) // NONE, no tags, normal block, 10 cells, no bloom
-	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00, 0x00, 0x00}) // NONE, tags, small blocks, 50 cells, no bloom
-	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02, 0x00, 0x00}) // NONE, no tags, tiny block, 100 cells, no bloom
-	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02, 0x00, 0x00}) // NONE, tags, large block, 1 cell, multi-qualifier, no bloom
-	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00, 0x00}) // GZ compression, 20 cells, no bloom
-	f.Add([]byte{0x02, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00, 0x00}) // SNAPPY compression, 20 cells, no bloom
-	f.Add([]byte{0x03, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00, 0x00}) // ZSTD compression, 20 cells, no bloom
-	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x01, 0x00}) // FAST_DIFF, no tags, 10 cells, no bloom
-	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x32, 0x00, 0x0A, 0x00, 0x01, 0x00}) // FAST_DIFF, tags, 50 cells, no bloom
-	f.Add([]byte{0x04, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x02, 0x01, 0x00}) // FAST_DIFF, tiny block, 100 cells, no bloom
-	f.Add([]byte{0x03, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x64, 0x02, 0x01, 0x00}) // FAST_DIFF, tags, 1 cell, no bloom
-	f.Add([]byte{0x00, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x01, 0x00}) // FAST_DIFF, NONE compression, 20 cells, no bloom
-	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x00, 0x01}) // NONE, no tags, 10 cells, ROW bloom
-	f.Add([]byte{0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x06, 0x00, 0x00, 0x01}) // NONE, tiny block, 100 cells, ROW bloom
-	f.Add([]byte{0x00, 0xFF, 0x00, 0x00, 0x0A, 0x00, 0x06, 0x00, 0x01, 0x01}) // FAST_DIFF, 10 cells, ROW bloom
-	f.Add([]byte{0x01, 0x00, 0x40, 0x00, 0x14, 0x00, 0x0A, 0x00, 0x00, 0x01}) // GZ, tags, 20 cells, ROW bloom
-
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(rapid.MakeFuzz(func(t *rapid.T) {
 		srv, err := getServer()
 		if err != nil {
 			t.Fatalf("start server: %v", err)
 		}
 
-		cfg := decodeParams(data)
-		cfg.OutputPath = filepath.Join(t.TempDir(), "test.hfile")
+		r := genRecipe(t)
 
-		if err := srv.generate(cfg); err != nil {
+		if estimateRecipeSize(r) > maxRecipeBytes {
+			t.Skip("recipe too large")
+		}
+
+		expectedCells := expandRecipe(r)
+		if len(expectedCells) == 0 {
+			t.Skip("no cells")
+		}
+
+		tmpDir, err := os.MkdirTemp("", "fuzz-hfile-*")
+		if err != nil {
+			t.Fatalf("create temp dir: %v", err)
+		}
+		t.Cleanup(func() { os.RemoveAll(tmpDir) })
+		t.Logf("%s: tmp dir: %s", t.Name(), tmpDir)
+
+		r.OutputPath = filepath.Join(tmpDir, fmt.Sprintf("test-%d.hfile", rapid.Int64().Draw(t, "fileid")))
+
+		if err := srv.generateRaw(r); err != nil {
 			t.Fatalf("generate hfile: %v", err)
 		}
 
-		verifyHFile(t, cfg)
-	})
-}
-
-func verifyHFile(t *testing.T, cfg hfileConfig) {
-	t.Helper()
-
-	file, err := os.Open(cfg.OutputPath)
-	if err != nil {
-		t.Fatalf("open hfile: %v", err)
-	}
-	defer file.Close()
-
-	fi, err := file.Stat()
-	if err != nil {
-		t.Fatalf("stat hfile: %v", err)
-	}
-
-	rd, err := Open(file, fi.Size())
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-
-	// Sort families and qualifiers the same way Java does.
-	families := make([]string, len(cfg.Families))
-	copy(families, cfg.Families)
-	sort.Strings(families)
-
-	qualifiers := make([]string, len(cfg.Qualifiers))
-	copy(qualifiers, cfg.Qualifiers)
-	sort.Strings(qualifiers)
-
-	totalCells := cfg.CellCount * len(families) * len(qualifiers)
-
-	// Property 1: EntryCount matches.
-	if got := int(rd.Trailer().EntryCount); got != totalCells {
-		t.Errorf("EntryCount = %d, want %d", got, totalCells)
-	}
-
-	// Scan all cells.
-	scanner := rd.Scanner()
-	count := 0
-	var prevRow, prevFamily, prevQualifier string
-	var prevTimestamp uint64
-
-	for scanner.Next() {
-		c := scanner.Cell()
-
-		// Determine expected cell based on position.
-		cellIdx := count
-		qualIdx := cellIdx % len(qualifiers)
-		cellIdx /= len(qualifiers)
-		famIdx := cellIdx % len(families)
-		rowIdx := cellIdx / len(families)
-
-		expectedRow := fmt.Sprintf("row-%05d", rowIdx)
-		expectedFamily := families[famIdx]
-		expectedQualifier := qualifiers[qualIdx]
-		expectedValue := generateExpectedValue(rowIdx, cfg.ValueSize)
-
-		// Property 5: Cell content matches deterministic generation.
-		if string(c.Row) != expectedRow {
-			t.Errorf("cell %d: row = %q, want %q", count, c.Row, expectedRow)
-		}
-		if string(c.Family) != expectedFamily {
-			t.Errorf("cell %d: family = %q, want %q", count, c.Family, expectedFamily)
-		}
-		if string(c.Qualifier) != expectedQualifier {
-			t.Errorf("cell %d: qualifier = %q, want %q", count, c.Qualifier, expectedQualifier)
-		}
-		if c.Timestamp != uint64(cfg.Timestamp) {
-			t.Errorf("cell %d: timestamp = %d, want %d", count, c.Timestamp, cfg.Timestamp)
-		}
-		if string(c.Value) != expectedValue {
-			t.Errorf("cell %d: value = %q, want %q", count, c.Value, expectedValue)
-		}
-		if c.Type != CellTypePut {
-			t.Errorf("cell %d: type = %v, want Put", count, c.Type)
-		}
-
-		// Property 4: HBase sort order (row, family, qualifier, timestamp desc).
-		curRow := string(c.Row)
-		curFamily := string(c.Family)
-		curQualifier := string(c.Qualifier)
-		if count > 0 {
-			cmp := strings.Compare(curRow, prevRow)
-			if cmp < 0 {
-				t.Errorf("cell %d: row %q < previous row %q", count, curRow, prevRow)
-			} else if cmp == 0 {
-				cmp = strings.Compare(curFamily, prevFamily)
-				if cmp < 0 {
-					t.Errorf("cell %d: family %q < previous family %q", count, curFamily, prevFamily)
-				} else if cmp == 0 {
-					cmp = strings.Compare(curQualifier, prevQualifier)
-					if cmp < 0 {
-						t.Errorf("cell %d: qualifier %q < previous qualifier %q", count, curQualifier, prevQualifier)
-					} else if cmp == 0 {
-						if c.Timestamp > prevTimestamp {
-							t.Errorf("cell %d: timestamp %d > previous %d (should be descending)", count, c.Timestamp, prevTimestamp)
-						}
-					}
-				}
-			}
-		}
-		prevRow = curRow
-		prevFamily = curFamily
-		prevQualifier = curQualifier
-		prevTimestamp = c.Timestamp
-
-		count++
-	}
-
-	// Property 6: No scanner error.
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scanner error: %v", err)
-	}
-
-	// Property 3: Scanner yields exactly totalCells.
-	if count != totalCells {
-		t.Errorf("scanned %d cells, want %d", count, totalCells)
-	}
-
-	// Property 7: Bloom filter presence and correctness.
-	bf := rd.BloomFilter()
-	if cfg.BloomType == "NONE" {
-		if bf != nil {
-			t.Errorf("bloom filter present but bloomType=NONE")
-		}
-	} else {
-		if bf == nil {
-			t.Errorf("bloom filter absent but bloomType=%s", cfg.BloomType)
-		} else {
-			// All rows that exist must return MayContain=true.
-			for i := range cfg.CellCount {
-				row := fmt.Appendf(nil, "row-%05d", i)
-				ok, err := bf.MayContain(row)
-				if err != nil {
-					t.Fatalf("bloom MayContain: %v", err)
-				}
-				if !ok {
-					t.Errorf("bloom filter says row %q not present", row)
-				}
-			}
-		}
-	}
+		verifyHFileProperties(t, r.OutputPath, r.BloomType, expectedCells)
+	}))
 }

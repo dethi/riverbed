@@ -38,7 +38,7 @@ mvn -q exec:java -Dexec.mainClass=GenerateHFileServer
 
 Once started, the server expects JSON objects, each representing an HFile configuration, to be written to its standard input, followed by a newline. The server will generate an HFile for each valid JSON input.
 
-Example JSON configuration (conforms to the `hfileConfig` struct in `hfile/fuzz_test.go`):
+Example JSON configuration (conforms to the `recipe` struct in `hfile/prop_test.go`):
 
 ```json
 {

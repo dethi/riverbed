@@ -236,7 +236,7 @@ func TestHFileProperties(t *testing.T) {
 		t.Fatalf("start server: %v", err)
 	}
 
-	t.Logf("%s: tmp=%s", t.Name(), t.TempDir())
+	t.Logf("%s: tmp dir: %s", t.Name(), t.TempDir())
 
 	rapid.Check(t, func(rt *rapid.T) {
 		r := genRecipe(rt)
