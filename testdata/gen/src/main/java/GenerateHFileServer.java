@@ -33,6 +33,7 @@ public class GenerateHFileServer {
         int valueSize;
         long timestamp;
         int type;
+        int tagSize;
     }
 
     static class RowGroup {
@@ -220,6 +221,26 @@ public class GenerateHFileServer {
         return result;
     }
 
+    private static byte[] generateRecipeTag(long seed, int globalIdx, int cellIdx, int size) {
+        if (size == 0) {
+            return new byte[0];
+        }
+        MessageDigest md = sha256();
+        md.update(longToLE(seed));
+        md.update(longToLE(globalIdx));
+        md.update(longToLE(cellIdx));
+        md.update(new byte[]{'t'});
+        byte[] block = md.digest();
+        byte[] result = new byte[size];
+        int off = 0;
+        while (off < size) {
+            int n = Math.min(block.length, size - off);
+            System.arraycopy(block, 0, result, off, n);
+            off += n;
+        }
+        return result;
+    }
+
     private static byte[] longToLE(long v) {
         byte[] buf = new byte[8];
         ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN).putLong(v);
@@ -234,15 +255,28 @@ public class GenerateHFileServer {
         long timestamp;
         byte type;
         byte[] value;
+        List<Tag> tags;
     }
 
     private static void generateHFileFromRecipe(Configuration conf, FileSystem fs, Config cfg) throws IOException {
         Path path = new Path(cfg.outputPath);
 
+        // Detect whether any cell template has tags.
+        boolean hasTags = false;
+        for (RowGroup group : cfg.groups) {
+            for (CellTemplate ct : group.cells) {
+                if (ct.tagSize > 0) {
+                    hasTags = true;
+                    break;
+                }
+            }
+            if (hasTags) break;
+        }
+
         HFileContext context = new HFileContextBuilder()
                 .withCompression(Compression.Algorithm.valueOf(cfg.compression))
                 .withDataBlockEncoding(DataBlockEncoding.valueOf(cfg.dataBlockEncoding))
-                .withIncludesTags(cfg.includeTags)
+                .withIncludesTags(hasTags)
                 .withBlockSize(cfg.blockSize)
                 .build();
 
@@ -279,6 +313,10 @@ public class GenerateHFileServer {
                     ec.timestamp = ct.timestamp;
                     ec.type = (byte) ct.type;
                     ec.value = generateRecipeValue(cfg.seed, globalIdx, c, ct.valueSize);
+                    if (ct.tagSize > 0) {
+                        ec.tags = new ArrayList<>();
+                        ec.tags.add(new ArrayBackedTag((byte) 1, generateRecipeTag(cfg.seed, globalIdx, c, ct.tagSize)));
+                    }
                     rowCells.add(ec);
                 }
 
@@ -306,8 +344,14 @@ public class GenerateHFileServer {
                 }
 
                 for (ExpandedCell ec : deduped) {
-                    KeyValue kv = new KeyValue(ec.row, ec.family, ec.qualifier, ec.timestamp,
-                            KeyValue.Type.codeToType(ec.type), ec.value);
+                    KeyValue kv;
+                    if (ec.tags != null) {
+                        kv = new KeyValue(ec.row, ec.family, ec.qualifier, ec.timestamp,
+                                KeyValue.Type.codeToType(ec.type), ec.value, ec.tags);
+                    } else {
+                        kv = new KeyValue(ec.row, ec.family, ec.qualifier, ec.timestamp,
+                                KeyValue.Type.codeToType(ec.type), ec.value);
+                    }
                     writer.append(kv);
                 }
 

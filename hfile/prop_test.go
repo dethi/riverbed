@@ -20,6 +20,7 @@ type cellTemplate struct {
 	ValueSize     int   `json:"valueSize"`
 	Timestamp     int64 `json:"timestamp"`
 	Type          int   `json:"type"`
+	TagSize       int   `json:"tagSize"`
 }
 
 type rowGroup struct {
@@ -78,6 +79,7 @@ func genRowGroup(t *rapid.T) rowGroup {
 			ValueSize:     rapid.IntRange(0, 10000).Draw(t, "valueSize"),
 			Timestamp:     rapid.Int64Range(1, 2000000000000).Draw(t, "timestamp"),
 			Type:          rapid.SampledFrom([]int{4, 8}).Draw(t, "type"),
+			TagSize:       rapid.IntRange(0, 100).Draw(t, "tagSize"),
 		}
 	}
 	return rowGroup{RowCount: rowCount, RowKeySize: rowKeySize, Cells: cells}
@@ -139,6 +141,35 @@ func generateRecipeValue(seed int64, globalIdx, cellIdx, size int) []byte {
 	return result
 }
 
+func generateRecipeTag(seed int64, globalIdx, cellIdx, size int) []byte {
+	if size == 0 {
+		return nil
+	}
+	h := sha256.New()
+	h.Write(longToLE(seed))
+	h.Write(longToLE(int64(globalIdx)))
+	h.Write(longToLE(int64(cellIdx)))
+	h.Write([]byte{'t'})
+	block := h.Sum(nil)
+	result := make([]byte, size)
+	off := 0
+	for off < size {
+		n := copy(result[off:], block)
+		off += n
+	}
+	return result
+}
+
+// buildTag builds the raw HBase tag bytes for a single tag: [2-byte length][1-byte type][value].
+func buildTag(tagType byte, value []byte) []byte {
+	tagLen := 1 + len(value) // type byte + value
+	buf := make([]byte, 2+tagLen)
+	binary.BigEndian.PutUint16(buf[:2], uint16(tagLen))
+	buf[2] = tagType
+	copy(buf[3:], value)
+	return buf
+}
+
 // hbaseCellLess returns true if a should be ordered before b in HBase order.
 // Within an HFile (single family), the order is: row ASC, qualifier ASC, timestamp DESC, type DESC.
 func hbaseCellLess(a, b *Cell) bool {
@@ -173,6 +204,10 @@ func expandRecipe(r recipe) []Cell {
 
 			var rowCells []Cell
 			for ci, ct := range group.Cells {
+				var tags []byte
+				if ct.TagSize > 0 {
+					tags = buildTag(1, generateRecipeTag(r.Seed, globalIdx, ci, ct.TagSize))
+				}
 				rowCells = append(rowCells, Cell{
 					Row:       rowKey,
 					Family:    family,
@@ -180,6 +215,7 @@ func expandRecipe(r recipe) []Cell {
 					Timestamp: uint64(ct.Timestamp),
 					Type:      CellType(ct.Type),
 					Value:     generateRecipeValue(r.Seed, globalIdx, ci, ct.ValueSize),
+					Tags:      tags,
 				})
 			}
 
@@ -218,7 +254,7 @@ func estimateRecipeSize(r recipe) int64 {
 	for _, g := range r.Groups {
 		var perRow int64
 		for _, c := range g.Cells {
-			perRow += int64(g.RowKeySize) + famSize + int64(c.QualifierSize+c.ValueSize+32)
+			perRow += int64(g.RowKeySize) + famSize + int64(c.QualifierSize+c.ValueSize+c.TagSize+32)
 		}
 		total += int64(g.RowCount) * perRow
 	}
@@ -315,6 +351,9 @@ func verifyHFileProperties(t *rapid.T, path string, bloomType string, expectedCe
 		}
 		if !bytes.Equal(c.Value, exp.Value) {
 			t.Errorf("cell %d: value mismatch (len got=%d want=%d)", count, len(c.Value), len(exp.Value))
+		}
+		if !bytes.Equal(c.Tags, exp.Tags) {
+			t.Errorf("cell %d: tags mismatch (len got=%d want=%d)", count, len(c.Tags), len(exp.Tags))
 		}
 
 		// Property 3: HBase sort order.
