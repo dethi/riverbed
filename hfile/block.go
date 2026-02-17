@@ -134,6 +134,10 @@ func ReadBlock(r io.ReaderAt, offset int64, decomp Decompressor) (*Block, error)
 		return nil, err
 	}
 
+	if hdr.OnDiskSizeWithoutHeader < 0 {
+		return nil, fmt.Errorf("hfile: invalid on-disk size %d at offset %d", hdr.OnDiskSizeWithoutHeader, offset)
+	}
+
 	// Read the on-disk data after the header.
 	onDisk := make([]byte, hdr.OnDiskSizeWithoutHeader)
 	if _, err := r.ReadAt(onDisk, offset+blockHeaderSize); err != nil {
