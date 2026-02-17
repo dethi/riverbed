@@ -54,11 +54,11 @@ func readCompressedInt(buf []byte, offset int) (int, int, error) {
 
 // FAST_DIFF flag bits.
 const (
-	maskTimestampLength  = 0x07 // bits 0-2: common timestamp prefix length
-	flagSameKeyLength    = 0x08 // bit 3
-	flagSameValueLength  = 0x10 // bit 4
-	flagSameType         = 0x20 // bit 5
-	flagSameValue        = 0x40 // bit 6
+	maskTimestampLength = 0x07 // bits 0-2: common timestamp prefix length
+	flagSameKeyLength   = 0x08 // bit 3
+	flagSameValueLength = 0x10 // bit 4
+	flagSameType        = 0x20 // bit 5
+	flagSameValue       = 0x40 // bit 6
 )
 
 // fastDiffDecoder decodes FAST_DIFF encoded data blocks into NONE format.
@@ -81,8 +81,8 @@ func (d fastDiffDecoder) Decode(src []byte) ([]byte, error) {
 		valLen            int
 		keyBuf            []byte // reconstructed key buffer
 		prevValue         []byte
-		rowLenWithSize    int    // rowLength + 2 (row length field size)
-		famLenWithSize    int    // familyLength + 1 (family length field size)
+		rowLenWithSize    int // rowLength + 2 (row length field size)
+		famLenWithSize    int // familyLength + 1 (family length field size)
 		prevTimestampType [9]byte
 		isFirst           = true
 	)

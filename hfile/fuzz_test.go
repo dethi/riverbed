@@ -358,7 +358,7 @@ func verifyHFile(t *testing.T, cfg hfileConfig) {
 		} else {
 			// All rows that exist must return MayContain=true.
 			for i := range cfg.CellCount {
-				row := []byte(fmt.Sprintf("row-%05d", i))
+				row := fmt.Appendf(nil, "row-%05d", i)
 				ok, err := bf.MayContain(row)
 				if err != nil {
 					t.Fatalf("bloom MayContain: %v", err)
