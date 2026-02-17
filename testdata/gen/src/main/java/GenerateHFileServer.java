@@ -241,8 +241,8 @@ public class GenerateHFileServer {
 
         HFileContext context = new HFileContextBuilder()
                 .withCompression(Compression.Algorithm.valueOf(cfg.compression))
-                .withDataBlockEncoding(DataBlockEncoding.NONE)
-                .withIncludesTags(false)
+                .withDataBlockEncoding(DataBlockEncoding.valueOf(cfg.dataBlockEncoding))
+                .withIncludesTags(cfg.includeTags)
                 .withBlockSize(cfg.blockSize)
                 .build();
 
