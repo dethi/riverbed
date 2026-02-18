@@ -51,7 +51,13 @@ func ReadRootIndex(r io.ReaderAt, offset int64, numEntries int, numLevels uint32
 }
 
 func parseRootIndex(data []byte, numEntries int) (*BlockIndex, int, error) {
-	entries := make([]IndexEntry, 0, numEntries)
+	// Each entry requires at least 12 bytes (offset + dataSize) plus 1 byte for the key
+	// length varint. Cap the capacity to avoid huge allocations from corrupted metadata.
+	cap := numEntries
+	if maxEntries := len(data) / 13; cap > maxEntries {
+		cap = maxEntries
+	}
+	entries := make([]IndexEntry, 0, cap)
 	offset := 0
 
 	for i := range numEntries {
