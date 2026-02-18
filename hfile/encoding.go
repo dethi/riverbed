@@ -43,6 +43,9 @@ func readCompressedInt(buf []byte, offset int) (int, int, error) {
 	shift := 0
 	for i := offset; i < len(buf); i++ {
 		b := buf[i]
+		if shift >= 31 {
+			return 0, 0, fmt.Errorf("hfile: compressed int overflow at offset %d", offset)
+		}
 		result |= int(b&0x7f) << shift
 		shift += 7
 		if b&0x80 == 0 {
