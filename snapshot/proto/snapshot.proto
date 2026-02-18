@@ -1,0 +1,99 @@
+// Subset of HBase protobuf definitions needed for reading snapshot manifests.
+// Derived from hbase-protocol/src/main/protobuf/Snapshot.proto, HBase.proto,
+// and FS.proto.
+
+syntax = "proto2";
+package hbase.pb;
+
+option go_package = "github.com/dethi/riverbed/snapshot/proto";
+
+// From HBase.proto
+
+message TableName {
+  required bytes namespace = 1;
+  required bytes qualifier = 2;
+}
+
+message ColumnFamilySchema {
+  required bytes name = 1;
+  repeated BytesBytesPair attributes = 2;
+  repeated NameStringPair configuration = 3;
+}
+
+message TableSchema {
+  optional TableName table_name = 1;
+  repeated BytesBytesPair attributes = 2;
+  repeated ColumnFamilySchema column_families = 3;
+  repeated NameStringPair configuration = 4;
+}
+
+message BytesBytesPair {
+  required bytes first = 1;
+  required bytes second = 2;
+}
+
+message NameStringPair {
+  required string name = 1;
+  required string value = 2;
+}
+
+message RegionInfo {
+  required uint64 region_id = 1;
+  required TableName table_name = 2;
+  optional bytes start_key = 3;
+  optional bytes end_key = 4;
+  optional bool offline = 5;
+  optional bool split = 6;
+  optional int32 replica_id = 7 [default = 0];
+}
+
+// From FS.proto
+
+message Reference {
+  required bytes splitkey = 1;
+  enum Range {
+    TOP = 0;
+    BOTTOM = 1;
+  }
+  required Range range = 2;
+}
+
+// From Snapshot.proto
+
+message SnapshotDescription {
+  required string name = 1;
+  optional string table = 2;
+  optional int64 creation_time = 3 [default = 0];
+  enum Type {
+    DISABLED = 0;
+    FLUSH = 1;
+    SKIPFLUSH = 2;
+  }
+  optional Type type = 4 [default = FLUSH];
+  optional int32 version = 5;
+  optional string owner = 6;
+  optional int64 ttl = 8 [default = 0];
+  optional int64 max_file_size = 9 [default = 0];
+}
+
+message SnapshotRegionManifest {
+  optional int32 version = 1;
+  required RegionInfo region_info = 2;
+  repeated FamilyFiles family_files = 3;
+
+  message StoreFile {
+    required string name = 1;
+    optional Reference reference = 2;
+    optional uint64 file_size = 3;
+  }
+
+  message FamilyFiles {
+    required bytes family_name = 1;
+    repeated StoreFile store_files = 2;
+  }
+}
+
+message SnapshotDataManifest {
+  required TableSchema table_schema = 1;
+  repeated SnapshotRegionManifest region_manifests = 2;
+}
