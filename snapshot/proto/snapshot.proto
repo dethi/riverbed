@@ -3,7 +3,7 @@
 // and FS.proto.
 
 syntax = "proto2";
-package hbase.pb;
+package hbase.pb.snapshot;
 
 option go_package = "github.com/dethi/riverbed/snapshot/proto";
 
