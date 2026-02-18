@@ -55,7 +55,7 @@ func (snappyDecompressor) Decompress(src []byte, uncompressedSize int) ([]byte, 
 			return nil, err
 		}
 		// If snappy used our tail, just reslice. Otherwise append.
-		if len(decoded) <= cap(tail) && &decoded[0] == &tail[0] {
+		if len(decoded) > 0 && len(decoded) <= cap(tail) && &decoded[0] == &tail[0] {
 			return dst[:off+len(decoded)], nil
 		}
 		return append(dst, decoded...), nil
