@@ -51,6 +51,9 @@ func ReadRootIndex(r io.ReaderAt, offset int64, numEntries int, numLevels uint32
 }
 
 func parseRootIndex(data []byte, numEntries int) (*BlockIndex, int, error) {
+	if numEntries < 0 {
+		return nil, 0, fmt.Errorf("hfile: invalid numEntries %d", numEntries)
+	}
 	// Each entry requires at least 12 bytes (offset + dataSize) plus 1 byte for the key
 	// length varint. Cap the capacity to avoid huge allocations from corrupted metadata.
 	cap := numEntries
@@ -146,7 +149,7 @@ func parseNonRootIndex(data []byte) ([]IndexEntry, error) {
 	for i := range numEntries {
 		entryOff := entriesStart + secIdx[i]
 		entryEnd := entriesStart + secIdx[i+1]
-		if entryOff+12 > len(data) || entryEnd > len(data) {
+		if entryOff+12 > len(data) || entryEnd > len(data) || entryEnd < entryOff+12 {
 			return nil, fmt.Errorf("hfile: non-root index entry %d: not enough data", i)
 		}
 		blockOffset := int64(binary.BigEndian.Uint64(data[entryOff : entryOff+8]))
