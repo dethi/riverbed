@@ -49,7 +49,7 @@ func parseFileInfo(data []byte) (map[string][]byte, error) {
 	if prefixLen < 0 {
 		return nil, fmt.Errorf("hfile: invalid file info protobuf length prefix")
 	}
-	if prefixLen+int(msgLen) > len(data) {
+	if msgLen > uint64(len(data)-prefixLen) {
 		return nil, fmt.Errorf("hfile: file info protobuf length %d exceeds available data %d", msgLen, len(data)-prefixLen)
 	}
 	msgData := data[prefixLen : prefixLen+int(msgLen)]
