@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,14 @@ var (
 	gcsOnce   sync.Once
 	gcsClient *gcs.Client
 	gcsErr    error
+
+	// gcsLogger is a no-op logger by default. Call SetLogger to enable logging.
+	gcsLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 )
+
+// SetLogger sets the logger used to record GCS requests and their latency.
+// By default all logging is suppressed.
+func SetLogger(l *slog.Logger) { gcsLogger = l }
 
 func getGCSClient() (*gcs.Client, error) {
 	gcsOnce.Do(func() {
@@ -39,7 +47,9 @@ func openGCSObject(ctx context.Context, bucket, object string) (io.ReaderAt, int
 	if err != nil {
 		return nil, 0, nil, fmt.Errorf("gcs: create client: %w", err)
 	}
+	start := time.Now()
 	attrs, err := client.Bucket(bucket).Object(object).Attrs(ctx)
+	gcsLogger.Info("gcs: Attrs", "bucket", bucket, "object", object, "latency", time.Since(start).Round(time.Millisecond))
 	if err != nil {
 		return nil, 0, nil, fmt.Errorf("gcs: gs://%s/%s: %w", bucket, object, err)
 	}
@@ -52,7 +62,9 @@ func (r *gcsReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	start := time.Now()
 	rc, err := client.Bucket(r.bucket).Object(r.object).NewRangeReader(r.ctx, off, int64(len(p)))
+	gcsLogger.Info("gcs: RangeReader", "bucket", r.bucket, "object", r.object, "offset", off, "length", len(p), "latency", time.Since(start).Round(time.Millisecond))
 	if err != nil {
 		return 0, fmt.Errorf("gcs: range read gs://%s/%s at offset %d: %w", r.bucket, r.object, off, err)
 	}
@@ -109,7 +121,9 @@ func (f *gcsFile) open() error {
 			f.err = err
 			return
 		}
+		start := time.Now()
 		rc, err := client.Bucket(f.bucket).Object(f.object).NewReader(f.ctx)
+		gcsLogger.Info("gcs: Reader", "bucket", f.bucket, "object", f.object, "latency", time.Since(start).Round(time.Millisecond))
 		if err != nil {
 			if errors.Is(err, gcs.ErrObjectNotExist) {
 				f.err = &fs.PathError{Op: "open", Path: f.name, Err: fs.ErrNotExist}
@@ -175,6 +189,7 @@ func (d *gcsDir) ReadDir(n int) ([]fs.DirEntry, error) {
 	}
 	it := client.Bucket(d.fsys.bucket).Objects(d.fsys.ctx, query)
 
+	start := time.Now()
 	var entries []fs.DirEntry
 	for {
 		attrs, err := it.Next()
@@ -200,6 +215,7 @@ func (d *gcsDir) ReadDir(n int) ([]fs.DirEntry, error) {
 			break
 		}
 	}
+	gcsLogger.Info("gcs: List", "bucket", d.fsys.bucket, "prefix", d.fsys.prefix, "count", len(entries), "latency", time.Since(start).Round(time.Millisecond))
 	return entries, nil
 }
 
