@@ -35,11 +35,20 @@ func getGCSClient() (*gcs.Client, error) {
 	return gcsClient, gcsErr
 }
 
-// gcsReaderAt implements io.ReaderAt for a GCS object using range reads.
+const gcsChunkSize = 4 * 1024 * 1024 // 4 MiB read-ahead buffer
+
+// gcsReaderAt implements io.ReaderAt for a GCS object. Reads are served from
+// a 4 MiB buffer; a new GCS range request is only issued when the requested
+// offset falls outside the buffered window.
 type gcsReaderAt struct {
 	ctx    context.Context
 	bucket string
 	object string
+	size   int64
+
+	mu     sync.Mutex
+	buf    []byte
+	bufOff int64
 }
 
 func openGCSObject(ctx context.Context, bucket, object string) (io.ReaderAt, int64, func(), error) {
@@ -53,23 +62,47 @@ func openGCSObject(ctx context.Context, bucket, object string) (io.ReaderAt, int
 	if err != nil {
 		return nil, 0, nil, fmt.Errorf("gcs: gs://%s/%s: %w", bucket, object, err)
 	}
-	r := &gcsReaderAt{ctx: ctx, bucket: bucket, object: object}
+	r := &gcsReaderAt{ctx: ctx, bucket: bucket, object: object, size: attrs.Size}
 	return r, attrs.Size, func() {}, nil
 }
 
 func (r *gcsReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Serve from buffer if the request falls entirely within it.
+	if r.buf != nil && off >= r.bufOff && off+int64(len(p)) <= r.bufOff+int64(len(r.buf)) {
+		copy(p, r.buf[off-r.bufOff:])
+		return len(p), nil
+	}
+
+	// Fetch a new chunk, at least 4 MiB or the request size, clamped to EOF.
+	fetchSize := max(int64(gcsChunkSize), int64(len(p)))
+	if off+fetchSize > r.size {
+		fetchSize = r.size - off
+	}
+
 	client, err := getGCSClient()
 	if err != nil {
 		return 0, err
 	}
 	start := time.Now()
-	rc, err := client.Bucket(r.bucket).Object(r.object).NewRangeReader(r.ctx, off, int64(len(p)))
-	gcsLogger.Info("gcs: RangeReader", "bucket", r.bucket, "object", r.object, "offset", off, "length", len(p), "latency", time.Since(start).Round(time.Millisecond))
+	rc, err := client.Bucket(r.bucket).Object(r.object).NewRangeReader(r.ctx, off, fetchSize)
 	if err != nil {
 		return 0, fmt.Errorf("gcs: range read gs://%s/%s at offset %d: %w", r.bucket, r.object, off, err)
 	}
 	defer rc.Close()
-	return io.ReadFull(rc, p)
+
+	r.buf = make([]byte, fetchSize)
+	if _, err := io.ReadFull(rc, r.buf); err != nil {
+		r.buf = nil
+		return 0, fmt.Errorf("gcs: read gs://%s/%s: %w", r.bucket, r.object, err)
+	}
+	r.bufOff = off
+	gcsLogger.Info("gcs: RangeReader", "bucket", r.bucket, "object", r.object, "offset", off, "length", fetchSize, "latency", time.Since(start).Round(time.Millisecond))
+
+	copy(p, r.buf)
+	return len(p), nil
 }
 
 // gcsFS implements fs.FS for a GCS bucket + prefix.
