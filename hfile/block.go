@@ -129,7 +129,12 @@ func parseBlockHeader(buf []byte) (BlockHeader, error) {
 // ReadBlock reads a complete block (header + data) at the given offset,
 // verifies checksums, and decompresses the payload.
 func ReadBlock(r io.ReaderAt, offset int64, decomp Decompressor) (*Block, error) {
-	hdr, err := ReadBlockHeader(r, offset)
+	// Read the header first to learn the on-disk body size.
+	var headerBuf [blockHeaderSize]byte
+	if _, err := r.ReadAt(headerBuf[:], offset); err != nil {
+		return nil, fmt.Errorf("hfile: read block header at %d: %w", offset, err)
+	}
+	hdr, err := parseBlockHeader(headerBuf[:])
 	if err != nil {
 		return nil, err
 	}
@@ -152,11 +157,6 @@ func ReadBlock(r io.ReaderAt, offset int64, decomp Decompressor) (*Block, error)
 
 	// Verify checksums.
 	if hdr.ChecksumType != checksumNull {
-		// Read the raw header bytes for checksum computation.
-		var headerBuf [blockHeaderSize]byte
-		if _, err := r.ReadAt(headerBuf[:], offset); err != nil {
-			return nil, fmt.Errorf("hfile: re-read header for checksum at %d: %w", offset, err)
-		}
 		checksumData := onDisk[dataSize:]
 		if err := verifyChecksums(hdr.ChecksumType, int(hdr.BytesPerChecksum), headerBuf[:], onDisk[:dataSize], checksumData); err != nil {
 			return nil, fmt.Errorf("hfile: block at %d: %w", offset, err)
