@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/dethi/riverbed/hfile"
-	pb "github.com/dethi/riverbed/snapshot/proto"
-
+	"github.com/dethi/riverbed/scanner"
 	"github.com/dethi/riverbed/snapshot"
+	pb "github.com/dethi/riverbed/snapshot/proto"
 	"github.com/spf13/cobra"
 )
 
@@ -25,12 +25,14 @@ var snapshotCmd = &cobra.Command{
 }
 
 func init() {
-	snapshotCmd.Flags().Bool("dump", false, "dump all cells")
+	snapshotCmd.Flags().Bool("dump", false, "dump merged cells per region/family")
+	snapshotCmd.Flags().Int("max-versions", 0, "max cell versions to return per column (0 = unlimited)")
 	rootCmd.AddCommand(snapshotCmd)
 }
 
 func runSnapshot(cmd *cobra.Command, args []string) error {
 	dump, _ := cmd.Flags().GetBool("dump")
+	maxVersions, _ := cmd.Flags().GetInt("max-versions")
 	snapshotDir := args[0]
 	dataDir := args[1]
 
@@ -63,13 +65,50 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 		encodedName := encodeRegionName(ri)
 		for _, ff := range region.GetFamilyFiles() {
 			family := string(ff.GetFamilyName())
+
+			var (
+				readers []*hfile.Reader
+				files   []*os.File
+			)
+
 			for _, sf := range ff.GetStoreFiles() {
+				// Split references point into a parent region's HFile; skip them.
+				if sf.GetReference() != nil {
+					fmt.Fprintf(os.Stderr, "  Note: skipping split reference %s/%s\n", family, sf.GetName())
+					continue
+				}
+
 				path := filepath.Join(dataDir, encodedName, family, sf.GetName())
 				fmt.Println()
 				fmt.Printf("--- HFile: %s/%s/%s ---\n", encodedName, family, sf.GetName())
-				if err := openAndPrintHFile(path, dump); err != nil {
+
+				f, rd, err := openHFile(path)
+				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error reading %s: %v\n", path, err)
+					continue
 				}
+				files = append(files, f)
+				readers = append(readers, rd)
+				printHFileContent(rd, "  ", false)
+			}
+
+			if dump && len(readers) > 0 {
+				fmt.Println()
+				fmt.Printf("--- Merged Cells: %s/%s ---\n", encodedName, family)
+				scanners := make([]*hfile.Scanner, len(readers))
+				for i, rd := range readers {
+					scanners[i] = rd.Scanner()
+				}
+				rs, err := scanner.NewRegionScanner(scanners, scanner.Options{MaxVersions: maxVersions})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error creating scanner: %v\n", err)
+				} else {
+					printRegionCells(rs, "  ")
+				}
+			}
+
+			for _, f := range files {
+				f.Close()
 			}
 		}
 	}
@@ -149,23 +188,22 @@ func encodeRegionName(ri *pb.RegionInfo) string {
 	return fmt.Sprintf("%x", hash)
 }
 
-func openAndPrintHFile(path string, dump bool) error {
+// openHFile opens an HFile at path and returns the OS file and reader.
+// The caller is responsible for closing the file.
+func openHFile(path string) (*os.File, *hfile.Reader, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	defer f.Close()
-
 	fi, err := f.Stat()
 	if err != nil {
-		return err
+		f.Close()
+		return nil, nil, err
 	}
-
 	rd, err := hfile.Open(f, fi.Size())
 	if err != nil {
-		return err
+		f.Close()
+		return nil, nil, err
 	}
-
-	printHFileContent(rd, "  ", dump)
-	return nil
+	return f, rd, nil
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/dethi/riverbed/hfile"
+	"github.com/dethi/riverbed/scanner"
 )
 
 // Print functions take an indent string for formatting values.
@@ -72,6 +73,27 @@ func printBloomFilter(bf *hfile.BloomFilter, indent string) {
 	if bf.Comparator != "" {
 		fmt.Printf("%sComparator:      %s\n", indent, bf.Comparator)
 	}
+}
+
+func printRegionCells(rs *scanner.RegionScanner, indent string) {
+	count := 0
+	for rs.Next() {
+		c := rs.Cell()
+		fmt.Printf("%s%s/%s:%s/%d/%s = %s\n",
+			indent,
+			formatBytes(c.Row),
+			formatBytes(c.Family),
+			formatBytes(c.Qualifier),
+			c.Timestamp,
+			c.Type,
+			formatBytes(c.Value),
+		)
+		count++
+	}
+	if err := rs.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Scanner error: %v\n", err)
+	}
+	fmt.Printf("%sTotal: %d cells\n", indent, count)
 }
 
 func printCells(rd *hfile.Reader, indent string) {
