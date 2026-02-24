@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"time"
@@ -13,6 +13,7 @@ import (
 	"github.com/dethi/riverbed/hfile"
 	"github.com/dethi/riverbed/scanner"
 	"github.com/dethi/riverbed/snapshot"
+	"github.com/dethi/riverbed/storage"
 	pb "github.com/dethi/riverbed/snapshot/proto"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,12 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 	snapshotDir := args[0]
 	dataDir := args[1]
 
-	m, err := snapshot.ReadManifest(os.DirFS(snapshotDir))
+	fsys, err := storage.OpenDir(cmd.Context(), snapshotDir)
+	if err != nil {
+		return err
+	}
+
+	m, err := snapshot.ReadManifest(fsys)
 	if err != nil {
 		return err
 	}
@@ -68,7 +74,7 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 
 			var (
 				readers []*hfile.Reader
-				files   []*os.File
+				closers []func()
 			)
 
 			for _, sf := range ff.GetStoreFiles() {
@@ -78,16 +84,16 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 					continue
 				}
 
-				path := filepath.Join(dataDir, encodedName, family, sf.GetName())
+				path := storage.JoinPath(dataDir, encodedName, family, sf.GetName())
 				fmt.Println()
 				fmt.Printf("--- HFile: %s/%s/%s ---\n", encodedName, family, sf.GetName())
 
-				f, rd, err := openHFile(path)
+				close, rd, err := openHFile(cmd.Context(), path)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error reading %s: %v\n", path, err)
 					continue
 				}
-				files = append(files, f)
+				closers = append(closers, close)
 				readers = append(readers, rd)
 				printHFileContent(rd, "  ", false)
 			}
@@ -107,8 +113,8 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			for _, f := range files {
-				f.Close()
+			for _, close := range closers {
+				close()
 			}
 		}
 	}
@@ -188,22 +194,17 @@ func encodeRegionName(ri *pb.RegionInfo) string {
 	return fmt.Sprintf("%x", hash)
 }
 
-// openHFile opens an HFile at path and returns the OS file and reader.
-// The caller is responsible for closing the file.
-func openHFile(path string) (*os.File, *hfile.Reader, error) {
-	f, err := os.Open(path)
+// openHFile opens an HFile at path (local or gs://) and returns a close
+// function and reader. The caller is responsible for calling close.
+func openHFile(ctx context.Context, path string) (func(), *hfile.Reader, error) {
+	r, size, close, err := storage.OpenFile(ctx, path)
 	if err != nil {
 		return nil, nil, err
 	}
-	fi, err := f.Stat()
+	rd, err := hfile.Open(r, size)
 	if err != nil {
-		f.Close()
+		close()
 		return nil, nil, err
 	}
-	rd, err := hfile.Open(f, fi.Size())
-	if err != nil {
-		f.Close()
-		return nil, nil, err
-	}
-	return f, rd, nil
+	return close, rd, nil
 }

@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/dethi/riverbed/hfile"
+	"github.com/dethi/riverbed/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -24,18 +24,13 @@ func runHFile(cmd *cobra.Command, args []string) error {
 	dump, _ := cmd.Flags().GetBool("dump")
 	path := args[0]
 
-	f, err := os.Open(path)
+	r, size, close, err := storage.OpenFile(cmd.Context(), path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer close()
 
-	fi, err := f.Stat()
-	if err != nil {
-		return err
-	}
-
-	rd, err := hfile.Open(f, fi.Size())
+	rd, err := hfile.Open(r, size)
 	if err != nil {
 		return err
 	}
