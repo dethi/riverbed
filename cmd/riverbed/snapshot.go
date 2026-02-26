@@ -26,7 +26,10 @@ var snapshotCmd = &cobra.Command{
 }
 
 func init() {
-	snapshotCmd.Flags().Bool("dump", false, "dump merged cells per region/family")
+	snapshotCmd.Flags().Bool("print-snapshot", false, "print snapshot description and table schema")
+	snapshotCmd.Flags().Bool("print-region", false, "print region info")
+	snapshotCmd.Flags().Bool("print-hfile-meta", false, "print HFile metadata per store file")
+	snapshotCmd.Flags().Bool("print-kv", false, "dump merged cells per region/family")
 	snapshotCmd.Flags().Int("max-versions", 0, "max cell versions to return per column (0 = unlimited)")
 	snapshotCmd.Flags().String("start-key", "", "start row key for scan (inclusive)")
 	snapshotCmd.Flags().String("end-key", "", "end row key for scan (exclusive)")
@@ -34,7 +37,10 @@ func init() {
 }
 
 func runSnapshot(cmd *cobra.Command, args []string) error {
-	dump, _ := cmd.Flags().GetBool("dump")
+	printSnap, _ := cmd.Flags().GetBool("print-snapshot")
+	printRegion, _ := cmd.Flags().GetBool("print-region")
+	printHFileMeta, _ := cmd.Flags().GetBool("print-hfile-meta")
+	printKV, _ := cmd.Flags().GetBool("print-kv")
 	maxVersions, _ := cmd.Flags().GetInt("max-versions")
 	startKeyStr, _ := cmd.Flags().GetString("start-key")
 	endKeyStr, _ := cmd.Flags().GetString("end-key")
@@ -59,11 +65,12 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	printDescription(m.Description)
-
-	if m.TableSchema != nil {
-		fmt.Println()
-		printTableSchema(m.TableSchema)
+	if printSnap {
+		printDescription(m.Description)
+		if m.TableSchema != nil {
+			fmt.Println()
+			printTableSchema(m.TableSchema)
+		}
 	}
 
 	// Sort regions by start key.
@@ -92,8 +99,10 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 			break
 		}
 
-		fmt.Println()
-		printRegionInfo(ri)
+		if printRegion {
+			fmt.Println()
+			printRegionInfo(ri)
+		}
 
 		// Seek to startKey only in the first relevant region.
 		var scanStartKey []byte
@@ -101,6 +110,10 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 			scanStartKey = startKey
 		}
 		isFirstRegion = false
+
+		if !printHFileMeta && !printKV {
+			continue
+		}
 
 		encodedName := encodeRegionName(ri)
 		for _, ff := range region.GetFamilyFiles() {
@@ -119,8 +132,6 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 				}
 
 				path := storage.JoinPath(dataDir, encodedName, family, sf.GetName())
-				fmt.Println()
-				fmt.Printf("--- HFile: %s/%s/%s ---\n", encodedName, family, sf.GetName())
 
 				close, rd, err := openHFile(cmd.Context(), path)
 				if err != nil {
@@ -129,10 +140,15 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 				}
 				closers = append(closers, close)
 				readers = append(readers, rd)
-				printHFileContent(rd, "  ", false)
+
+				if printHFileMeta {
+					fmt.Println()
+					fmt.Printf("--- HFile: %s/%s/%s ---\n", encodedName, family, sf.GetName())
+					printHFileContent(rd, "  ", false)
+				}
 			}
 
-			if dump && len(readers) > 0 {
+			if printKV && len(readers) > 0 {
 				fmt.Println()
 				fmt.Printf("--- Merged Cells: %s/%s ---\n", encodedName, family)
 				scanners := make([]*hfile.Scanner, len(readers))
