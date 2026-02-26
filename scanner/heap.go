@@ -40,15 +40,22 @@ type kvHeap struct {
 }
 
 // newKVHeap initialises the heap from a slice of scanners.
-// Each scanner is advanced once (Next() called); those that have cells are
-// added to the heap. The minimum is immediately placed in cur so that peek()
-// is valid before the first next() call.
+// If seekKey is non-empty, each scanner is seeked to that key; otherwise it is
+// advanced once with Next(). Those that have cells are added to the heap. The
+// minimum is immediately placed in cur so that peek() is valid before the first
+// next() call.
 // Callers should pass slices newest-file-first so that lower order values
 // correspond to newer (higher-priority) files.
-func newKVHeap(scanners []*hfile.Scanner) (*kvHeap, error) {
+func newKVHeap(scanners []*hfile.Scanner, seekKey []byte) (*kvHeap, error) {
 	kv := &kvHeap{}
 	for i, s := range scanners {
-		if s.Next() {
+		var found bool
+		if len(seekKey) > 0 {
+			found = s.Seek(seekKey)
+		} else {
+			found = s.Next()
+		}
+		if found {
 			kv.h = append(kv.h, &scannerEntry{s: s, order: int64(i)})
 		} else if err := s.Err(); err != nil {
 			return nil, err

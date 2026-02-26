@@ -28,14 +28,26 @@ var snapshotCmd = &cobra.Command{
 func init() {
 	snapshotCmd.Flags().Bool("dump", false, "dump merged cells per region/family")
 	snapshotCmd.Flags().Int("max-versions", 0, "max cell versions to return per column (0 = unlimited)")
+	snapshotCmd.Flags().String("start-key", "", "start row key for scan (inclusive)")
+	snapshotCmd.Flags().String("end-key", "", "end row key for scan (exclusive)")
 	rootCmd.AddCommand(snapshotCmd)
 }
 
 func runSnapshot(cmd *cobra.Command, args []string) error {
 	dump, _ := cmd.Flags().GetBool("dump")
 	maxVersions, _ := cmd.Flags().GetInt("max-versions")
+	startKeyStr, _ := cmd.Flags().GetString("start-key")
+	endKeyStr, _ := cmd.Flags().GetString("end-key")
 	snapshotDir := args[0]
 	dataDir := args[1]
+
+	var startKey, endKey []byte
+	if startKeyStr != "" {
+		startKey = []byte(startKeyStr)
+	}
+	if endKeyStr != "" {
+		endKey = []byte(endKeyStr)
+	}
 
 	fsys, err := storage.OpenDir(cmd.Context(), snapshotDir)
 	if err != nil {
@@ -63,10 +75,32 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 		)
 	})
 
+	isFirstRegion := true
 	for _, region := range regions {
 		ri := region.GetRegionInfo()
+		regionStartKey := ri.GetStartKey()
+		regionEndKey := ri.GetEndKey()
+
+		// Skip regions entirely before startKey.
+		if len(startKey) > 0 && len(regionEndKey) > 0 &&
+			bytes.Compare(regionEndKey, startKey) <= 0 {
+			continue
+		}
+		// Stop at regions entirely after endKey.
+		if len(endKey) > 0 && len(regionStartKey) > 0 &&
+			bytes.Compare(regionStartKey, endKey) >= 0 {
+			break
+		}
+
 		fmt.Println()
 		printRegionInfo(ri)
+
+		// Seek to startKey only in the first relevant region.
+		var scanStartKey []byte
+		if isFirstRegion {
+			scanStartKey = startKey
+		}
+		isFirstRegion = false
 
 		encodedName := encodeRegionName(ri)
 		for _, ff := range region.GetFamilyFiles() {
@@ -105,7 +139,11 @@ func runSnapshot(cmd *cobra.Command, args []string) error {
 				for i, rd := range readers {
 					scanners[i] = rd.Scanner()
 				}
-				rs, err := scanner.NewRegionScanner(scanners, scanner.Options{MaxVersions: maxVersions})
+				rs, err := scanner.NewRegionScanner(scanners, scanner.Options{
+					MaxVersions: maxVersions,
+					StartKey:    scanStartKey,
+					EndKey:      endKey,
+				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error creating scanner: %v\n", err)
 				} else {

@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bytes"
+	"encoding/binary"
 
 	"github.com/dethi/riverbed/hfile"
 )
@@ -11,6 +12,14 @@ type Options struct {
 	// MaxVersions is the maximum number of versions to return per column.
 	// 0 means unlimited (return all versions).
 	MaxVersions int
+
+	// StartKey is the row key to start scanning from (inclusive).
+	// Empty means scan from the beginning of the region.
+	StartKey []byte
+
+	// EndKey is the row key to stop scanning at (exclusive).
+	// Empty means scan to the end of the region.
+	EndKey []byte
 }
 
 // RegionScanner merges N hfile.Scanner instances (for one region/family) into a
@@ -34,7 +43,11 @@ type RegionScanner struct {
 
 // NewRegionScanner creates a RegionScanner over the given HFile scanners.
 func NewRegionScanner(scanners []*hfile.Scanner, opts Options) (*RegionScanner, error) {
-	h, err := newKVHeap(scanners)
+	var seekKey []byte
+	if len(opts.StartKey) > 0 {
+		seekKey = rowSeekKey(opts.StartKey)
+	}
+	h, err := newKVHeap(scanners, seekKey)
 	if err != nil {
 		return nil, err
 	}
@@ -44,6 +57,16 @@ func NewRegionScanner(scanners []*hfile.Scanner, opts Options) (*RegionScanner, 
 		opts:          opts,
 		versionCounts: make(map[string]int),
 	}, nil
+}
+
+// rowSeekKey encodes a row as a 2-byte big-endian length prefix followed by
+// the row bytes — the first two fields of an HBase cell key. This prefix is
+// accepted by hfile.Scanner.Seek to position at the first cell of a row.
+func rowSeekKey(row []byte) []byte {
+	key := make([]byte, 2+len(row))
+	binary.BigEndian.PutUint16(key, uint16(len(row)))
+	copy(key[2:], row)
+	return key
 }
 
 // Next advances to the next visible cell, applying tombstone suppression and
@@ -61,6 +84,11 @@ func (s *RegionScanner) Next() bool {
 		// Advance the heap past this cell. The cell pointer remains valid
 		// because each hfile.Scanner.Next() allocates a fresh *Cell.
 		s.heap.next()
+
+		// Stop when we reach or pass the end key.
+		if len(s.opts.EndKey) > 0 && bytes.Compare(cell.Row, s.opts.EndKey) >= 0 {
+			return false
+		}
 
 		// On row change, reset per-row tracking.
 		if !bytes.Equal(cell.Row, s.currentRow) {

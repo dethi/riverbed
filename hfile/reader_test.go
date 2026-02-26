@@ -370,4 +370,39 @@ func TestSeek(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	// Cross-length row comparison tests.
+	// Existing rows are "row-000".."row-099" (length 7, start with 'r'=114).
+	// These tests verify that rows of different lengths are compared by content,
+	// not by the 2-byte length prefix in the cell key.
+
+	t.Run("ShortRowAfterAll", func(t *testing.T) {
+		// "z" (length 1) sorts after all "row-*" rows ('z'=122 > 'r'=114).
+		// Seek should return false — no cell >= "z".
+		// Bug: raw cell-key byte comparison puts shorter rows first regardless
+		// of content, so without the fix, Seek would wrongly return "row-000".
+		scanner := rd.Scanner()
+		key := makeRowKey("z")
+		if scanner.Seek(key) {
+			t.Fatalf("Seek returned true for key after all cells, cell row = %q", scanner.Cell().Row)
+		}
+		if err := scanner.Err(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("LongRowBeforeAll", func(t *testing.T) {
+		// "AAAAAAAAA" (length 9) sorts before all "row-*" rows ('A'=65 < 'r'=114).
+		// Seek should land at "row-000".
+		// Bug: raw cell-key byte comparison puts longer rows last regardless
+		// of content, so without the fix, Seek would wrongly return false.
+		scanner := rd.Scanner()
+		key := makeRowKey("AAAAAAAAA")
+		if !scanner.Seek(key) {
+			t.Fatalf("Seek returned false, err: %v", scanner.Err())
+		}
+		if string(scanner.Cell().Row) != "row-000" {
+			t.Errorf("row = %q, want %q", scanner.Cell().Row, "row-000")
+		}
+	})
 }

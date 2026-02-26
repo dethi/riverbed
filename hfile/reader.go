@@ -343,7 +343,7 @@ func (s *Scanner) Seek(key []byte) bool {
 
 	// Scan forward from the positioned block, skipping cells with key < seek key.
 	for s.Next() {
-		if bytes.Compare(cellKey(s.cell), key) >= 0 {
+		if compareHBaseKeys(cellKey(s.cell), key) >= 0 {
 			return true
 		}
 	}
@@ -355,9 +355,50 @@ func (s *Scanner) Seek(key []byte) bool {
 func searchIndex(entries []IndexEntry, key []byte) int {
 	// sort.Search finds the first i where entries[i].Key > key.
 	n := sort.Search(len(entries), func(i int) bool {
-		return bytes.Compare(entries[i].Key, key) > 0
+		return compareHBaseKeys(entries[i].Key, key) > 0
 	})
 	return n - 1
+}
+
+// compareHBaseKeys compares two HBase cell keys (or truncated seek-key prefixes)
+// using HBase's CellComparatorImpl ordering:
+//   - Rows are compared by byte content, ignoring the 2-byte length prefix.
+//   - For equal rows, remaining fields are compared lexicographically.
+//   - A truncated key (e.g. rowLen+row only) is considered less than any full
+//     cell key with the same row.
+func compareHBaseKeys(a, b []byte) int {
+	aRow := hbaseKeyRow(a)
+	bRow := hbaseKeyRow(b)
+	if cmp := bytes.Compare(aRow, bRow); cmp != 0 {
+		return cmp
+	}
+	// Same row content. Compare the fields that follow the row.
+	aRest := a[2+len(aRow):]
+	bRest := b[2+len(bRow):]
+	if len(aRest) == 0 && len(bRest) == 0 {
+		return 0
+	}
+	if len(aRest) == 0 {
+		return -1 // a is a row-only prefix; b has more fields → a < b
+	}
+	if len(bRest) == 0 {
+		return 1 // b is a row-only prefix; a has more fields → a > b
+	}
+	return bytes.Compare(aRest, bRest)
+}
+
+// hbaseKeyRow extracts the row bytes from a cell key or seek key.
+// Key format: rowLen(2BE) + row + [optional remaining fields].
+func hbaseKeyRow(key []byte) []byte {
+	if len(key) < 2 {
+		return nil
+	}
+	rowLen := int(binary.BigEndian.Uint16(key[:2]))
+	end := 2 + rowLen
+	if end > len(key) {
+		end = len(key)
+	}
+	return key[2:end]
 }
 
 // cellKey builds the raw HBase cell key from a Cell's components.
